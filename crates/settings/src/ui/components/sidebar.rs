@@ -3,7 +3,7 @@
 //! ::  Created Time  ->  2026/6/21 06:48 周日
 
 
-use super::SettingsLayout;
+use crate::ui::layout::SettingsLayout;
 use crate::ui::geometry::UiRect;
 use crate::ui::painter::Painter;
 use crate::ui::theme::SettingsTheme;

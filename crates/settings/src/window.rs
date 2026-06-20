@@ -3,7 +3,8 @@
 //! ::  Created Time  ->  2026/6/20 20:46 周六
 
 
-use crate::ui::components::{ ControlKind, SettingId, SettingView, SettingsLayout, choose_choice_value, draw_action_button, draw_setting_row, draw_sidebar_item, scale, slider_ratio_from_x };
+use crate::ui::layout::{ SettingId, SettingsLayout, ControlKind, scale };
+use crate::ui::components::{ SettingView, choose_choice_value, draw_action_button, draw_setting_row, draw_sidebar_item, slider_ratio_from_x };
 use crate::ui::paint_buffer::paint_buffered as draw_buffered;
 use crate::ui::painter::Painter;
 use crate::ui::theme::SettingsTheme;

@@ -12,7 +12,6 @@ mod slider;
 
 pub( crate ) use button::draw_action_button;
 pub( crate ) use choice::choose_choice_value;
-pub( crate ) use crate::ui::layout::{scale, ControlKind, SettingId, SettingRowLayout, SettingsLayout};
-pub( crate ) use setting_row::{draw_setting_row, SettingView};
+pub( crate ) use setting_row::{ draw_setting_row, SettingView };
 pub( crate ) use sidebar::draw_sidebar_item;
 pub( crate ) use slider::slider_ratio_from_x;

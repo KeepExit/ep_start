@@ -3,7 +3,7 @@
 //! ::  Created Time  ->  2026/6/21 06:48 周日
 
 
-use super::{ ControlKind, SettingId, SettingRowLayout };
+use crate::ui::layout::{ ControlKind, SettingId, SettingRowLayout };
 use super::choice::draw_choice_control;
 use super::slider::draw_slider_control;
 
