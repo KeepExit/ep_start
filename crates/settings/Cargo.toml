@@ -1,0 +1,19 @@
+#! ::  Project Path  ->  ep_start :: Cargo.toml :: Cargo
+#! ::  Created User  ->  Studio :: Ep
+#! ::  Created Time  ->  2026/6/20 18:20 周六
+
+
+[ package ]
+name = "settings"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+
+[ dependencies ]
+configuration.workspace = true
+localization.workspace = true
+platform.workspace = true
+windows.workspace = true

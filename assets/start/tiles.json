@@ -1,0 +1,29 @@
+{
+	"bars": [
+		{
+			"title": "常用",
+			"tiles": [
+				{
+					"title": "Windows 设置",
+					"target": "ms-settings:",
+					"color": "#744DA9"
+				},
+				{
+					"title": "文件资源管理器",
+					"target": "explorer.exe",
+					"color": "#0078D4"
+				},
+				{
+					"title": "计算器",
+					"target": "calc.exe",
+					"color": "#107C10"
+				},
+				{
+					"title": "记事本",
+					"target": "notepad.exe",
+					"color": "#0067C0"
+				}
+			]
+		}
+	]
+}

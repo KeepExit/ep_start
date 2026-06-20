@@ -1,0 +1,475 @@
+//! ::  Project Path  ->  ep_start :: window.rs :: main
+//! ::  Created User  ->  Studio :: Ep
+//! ::  Created Time  ->  2026/6/20 20:46 周六
+
+
+use crate::components::{ ControlKind, SettingId, SettingRowLayout, SettingsLayout, scale };
+use crate::ui::geometry::UiRect;
+use crate::ui::paint_buffer::paint_buffered as draw_buffered;
+use crate::ui::painter::Painter;
+use crate::ui::theme::{ SettingsTheme, rgb };
+use crate::window_state::{ WindowSize, WindowSizeStore };
+use configuration::{ AppPreferences, ConfigurationStore, StartPreferences };
+use localization::{ SettingText, TextResources };
+use platform::{ EmbeddedIcon, MonitorGeometry, show_error_dialog, trim_working_set };
+use std::ffi::c_void;
+use std::mem::size_of;
+use windows::Win32::Foundation::{ HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM };
+use windows::Win32::Graphics::Dwm::{ DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute };
+use windows::Win32::Graphics::Gdi::{ BeginPaint, ClientToScreen, EndPaint, FW_NORMAL, FW_SEMIBOLD, HDC, IntersectClipRect, InvalidateRect, PAINTSTRUCT, RestoreDC, SaveDC };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{ GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI };
+use windows::Win32::UI::Input::KeyboardAndMouse::{ ReleaseCapture, SetCapture };
+use windows::Win32::UI::WindowsAndMessaging::{ AppendMenuW, CREATESTRUCTW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, ICON_SMALL, IDC_ARROW, LoadCursorW, MF_STRING, MINMAXINFO, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETICON, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW };
+use windows::core::{ PCWSTR, Result as WindowsResult, w };
+
+
+const WM_SHOW_SETTINGS: u32 = WM_APP + 50;
+
+pub struct SettingsRuntime {
+	window: SettingsWindow,
+}
+
+#[derive( Clone, Copy )]
+pub struct SettingsController {
+	hwnd: HWND,
+}
+
+struct SettingsWindow {
+	hwnd: HWND,
+	state: *mut SettingsState,
+	_large_icon: EmbeddedIcon,
+	_small_icon: EmbeddedIcon,
+}
+
+struct SettingsState {
+	hwnd: HWND,
+	store: ConfigurationStore,
+	saved_preferences: AppPreferences,
+	draft_preferences: AppPreferences,
+	text: TextResources,
+	theme: SettingsTheme,
+	pointer_drag: Option< PointerDrag >,
+	scroll_y: i32,
+	on_change: Box< dyn FnMut( StartPreferences ) >,
+}
+
+#[derive( Clone, Copy )]
+enum PointerDrag {
+	Slider( SettingId ),
+	Scrollbar( i32 ),
+}
+
+impl SettingsRuntime {
+	pub fn new( store: ConfigurationStore, preferences: AppPreferences, small_icon: &'static [ u8 ], large_icon: &'static [ u8 ], on_change: impl FnMut( StartPreferences ) + 'static ) -> Result< Self, String > {
+		Ok( Self { window: SettingsWindow::create( store, preferences, small_icon, large_icon, on_change )? } )
+	}
+	pub fn controller( &self ) -> SettingsController {
+		SettingsController { hwnd: self.window.hwnd }
+	}
+}
+
+impl SettingsController {
+	pub fn show( &self ) {
+		unsafe { let _ = PostMessageW( Some( self.hwnd ), WM_SHOW_SETTINGS, WPARAM( 0 ), LPARAM( 0 ) ); }
+	}
+}
+
+impl SettingsWindow {
+	fn create( store: ConfigurationStore, preferences: AppPreferences, small_icon_source: &'static [ u8 ], large_icon_source: &'static [ u8 ], on_change: impl FnMut( StartPreferences ) + 'static ) -> Result< Self, String > {
+		let large_icon = EmbeddedIcon::load_for_size( large_icon_source, 32, 32 )?;
+		let small_icon = EmbeddedIcon::load_for_size( small_icon_source, 16, 16 )?;
+		let text = TextResources::system()?;
+		let state = Box::into_raw( Box::new( SettingsState { hwnd: HWND::default(), store, saved_preferences: preferences, draft_preferences: preferences, text, theme: SettingsTheme::system(), pointer_drag: None, scroll_y: 0, on_change: Box::new( on_change ) } ) );
+		let hwnd = match unsafe { create_window( state, large_icon.handle(), small_icon.handle() ) } {
+			Ok( hwnd ) => hwnd,
+			Err( error ) => {
+				unsafe { drop( Box::from_raw( state ) ); }
+				return Err( format!( "创建设置窗口失败：{}", error ) );
+			}
+		};
+		Ok( Self { hwnd, state, _large_icon: large_icon, _small_icon: small_icon } )
+	}
+}
+
+impl Drop for SettingsWindow {
+	fn drop( &mut self ) {
+		unsafe {
+			let _ = DestroyWindow( self.hwnd );
+			drop( Box::from_raw( self.state ) );
+		}
+	}
+}
+
+impl SettingsState {
+	fn show( &mut self ) {
+		let Ok( geometry ) = MonitorGeometry::from_cursor() else { return; };
+		let remembered = WindowSizeStore::load();
+		let mut dpi_x = 96_u32;
+		let mut dpi_y = 96_u32;
+		unsafe { let _ = GetDpiForMonitor( geometry.monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y ); }
+		let width = scale( remembered.width, dpi_x as i32 ).clamp( scale( 620, dpi_x as i32 ), ( geometry.work_width() - 48 ).max( scale( 620, dpi_x as i32 ) ) );
+		let height = scale( remembered.height, dpi_y as i32 ).clamp( scale( 460, dpi_y as i32 ), ( geometry.work_height() - 48 ).max( scale( 460, dpi_y as i32 ) ) );
+		let x = geometry.work_rect.left + ( geometry.work_width() - width ) / 2;
+		let y = geometry.work_rect.top + ( geometry.work_height() - height ) / 2;
+		self.refresh_theme();
+		self.scroll_y = 0;
+		unsafe {
+			let _ = SetWindowPos( self.hwnd, None, x, y, width, height, Default::default() );
+			let _ = ShowWindow( self.hwnd, SW_SHOW );
+			let _ = SetForegroundWindow( self.hwnd );
+		}
+	}
+	fn refresh_theme( &mut self ) {
+		self.theme = SettingsTheme::system();
+		let dark = self.theme.dark as i32;
+		unsafe {
+			let _ = DwmSetWindowAttribute( self.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, std::ptr::from_ref( &dark ).cast(), size_of::< i32 >() as u32 );
+			let _ = InvalidateRect( Some( self.hwnd ), None, false );
+		}
+	}
+	fn update_slider( &mut self, field: SettingId, x: i32 ) {
+		let Some( row ) = self.layout().row( field ).copied() else { return; };
+		let dpi = unsafe { GetDpiForWindow( self.hwnd ) }.max( 96 ) as i32;
+		let ( left, right ) = slider_track_bounds( row.control, field, dpi );
+		let ratio = ( x - left ).clamp( 0, right - left ) as f32 / ( right - left ).max( 1 ) as f32;
+		match field {
+			SettingId::Overlay => self.draft_preferences.start.overlay_opacity_percent = ( ratio * 100.0 ).round() as u8,
+			SettingId::Blur => self.draft_preferences.start.blur_percent = ( ratio * 100.0 ).round() as u8,
+			SettingId::AnimationDuration => self.draft_preferences.start.opening_duration_ms = ( ( ratio * 100.0 ).round() as u32 * 50 ).min( 5000 ),
+			_ => return,
+		}
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+	fn undo( &mut self ) {
+		if !self.is_dirty() { return; }
+		self.draft_preferences = self.saved_preferences;
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+	fn save( &mut self ) {
+		if !self.is_dirty() { return; }
+		self.draft_preferences.start.normalize();
+		if let Err( error ) = self.store.save( &self.draft_preferences ) {
+			show_error_dialog( "保存设置失败", &error );
+			return;
+		}
+		match self.store.load() {
+			Ok( preferences ) => {
+				self.saved_preferences = preferences;
+				self.draft_preferences = preferences;
+				( self.on_change )( preferences.start );
+			}
+			Err( error ) => {
+				show_error_dialog( "重新读取设置失败", &error );
+				return;
+			}
+		}
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+	fn is_dirty( &self ) -> bool {
+		self.draft_preferences != self.saved_preferences
+	}
+	fn hit_test_slider( &self, x: i32, y: i32 ) -> Option< SettingId > {
+		let layout = self.layout();
+		let id = layout.hit_control( x, y )?;
+		layout.row( id ).filter( |row| row.kind == ControlKind::Slider ).map( |row| row.id )
+	}
+	fn hit_test_choice( &self, x: i32, y: i32 ) -> Option< SettingId > {
+		let layout = self.layout();
+		let id = layout.hit_control( x, y )?;
+		layout.row( id ).filter( |row| row.kind == ControlKind::Choice ).map( |row| row.id )
+	}
+	fn choose( &mut self, field: SettingId, point: POINT ) {
+		let range = match field { SettingId::BarColumns => 1..=6, SettingId::TilesPerRow => 3..=5, _ => return };
+		let Ok( menu ) = ( unsafe { CreatePopupMenu() } ) else { return; };
+		for value in range {
+			let label: Vec< u16 > = value.to_string().encode_utf16().chain( [ 0 ] ).collect();
+			unsafe { let _ = AppendMenuW( menu, MF_STRING, value as usize, PCWSTR( label.as_ptr() ) ); }
+		}
+		let selected = unsafe { TrackPopupMenuEx( menu, ( TPM_RIGHTBUTTON | TPM_RETURNCMD ).0, point.x, point.y, self.hwnd, None ) }.0 as u8;
+		unsafe { let _ = DestroyMenu( menu ); }
+		if selected == 0 { return; }
+		match field {
+			SettingId::BarColumns => self.draft_preferences.start.tile_bar_columns = selected,
+			SettingId::TilesPerRow => self.draft_preferences.start.tiles_per_row = selected,
+			_ => return,
+		}
+		self.draft_preferences.start.normalize();
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+	fn layout( &self ) -> SettingsLayout {
+		let mut client = RECT::default();
+		unsafe { let _ = GetClientRect( self.hwnd, &mut client ); }
+		let dpi = unsafe { GetDpiForWindow( self.hwnd ) }.max( 96 ) as i32;
+		SettingsLayout::calculate( client, dpi, self.scroll_y )
+	}
+	fn scroll_to( &mut self, position: i32 ) {
+		let maximum = self.layout().scroll_max;
+		let position = position.clamp( 0, maximum );
+		if position == self.scroll_y { return; }
+		self.scroll_y = position;
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+	fn begin_scroll_drag( &mut self, x: i32, y: i32 ) -> bool {
+		let layout = self.layout();
+		if layout.hit_scroll_thumb( x, y ) {
+			let thumb_top = layout.scrollbar.unwrap().thumb.top;
+			self.pointer_drag = Some( PointerDrag::Scrollbar( y - thumb_top ) );
+			unsafe { SetCapture( self.hwnd ); }
+			return true;
+		}
+		if layout.hit_scroll_track( x, y ) {
+			let scrollbar = layout.scrollbar.unwrap();
+			let offset = ( scrollbar.thumb.bottom - scrollbar.thumb.top ) / 2;
+			self.scroll_to( layout.scroll_from_thumb( y - offset ) );
+			self.pointer_drag = Some( PointerDrag::Scrollbar( offset ) );
+			unsafe { SetCapture( self.hwnd ); }
+			return true;
+		}
+		false
+	}
+	fn update_scroll_drag( &mut self, y: i32, offset: i32 ) {
+		let layout = self.layout();
+		self.scroll_to( layout.scroll_from_thumb( y - offset ) );
+	}
+	fn save_window_size( &self ) {
+		let mut rect = RECT::default();
+		if unsafe { GetWindowRect( self.hwnd, &mut rect ) }.is_ok() {
+			WindowSizeStore::save( WindowSize { width: rect.right - rect.left, height: rect.bottom - rect.top } );
+		}
+	}
+	fn paint( &self, hdc: HDC, client: RECT ) {
+		let dpi = unsafe { GetDpiForWindow( self.hwnd ) }.max( 96 ) as i32;
+		let layout = SettingsLayout::calculate( client, dpi, self.scroll_y );
+		let painter = Painter::new( hdc, dpi );
+		painter.fill( client, self.theme.background );
+		painter.fill( layout.sidebar, self.theme.sidebar );
+		if layout.expanded_sidebar {
+			painter.text( &self.text.settings, layout.settings_title, 25, FW_SEMIBOLD.0 as i32, self.theme.text );
+		}
+		self.draw_sidebar_item( &painter, &layout );
+		painter.text( &self.text.start, layout.page_title, 30, FW_SEMIBOLD.0 as i32, self.theme.text );
+		let saved = unsafe { SaveDC( hdc ) };
+		unsafe { let _ = IntersectClipRect( hdc, 0, layout.viewport_top, client.right, layout.viewport_bottom ); }
+		painter.text( &self.text.menu_background, layout.menu_section_title, 17, FW_SEMIBOLD.0 as i32, self.theme.text );
+		painter.text( &self.text.tiles, layout.tile_section_title, 17, FW_SEMIBOLD.0 as i32, self.theme.text );
+		for row in &layout.rows {
+			self.draw_setting_row( &painter, row );
+		}
+		unsafe { let _ = RestoreDC( hdc, saved ); }
+		let dirty = self.is_dirty();
+		self.draw_action_button( &painter, layout.undo_button, &self.text.undo, false, dirty );
+		self.draw_action_button( &painter, layout.save_button, &self.text.save, true, dirty );
+		if let Some( scrollbar ) = layout.scrollbar {
+			painter.round_rect( scrollbar.thumb, 4, self.theme.secondary_text );
+		}
+	}
+	fn paint_buffered( &self, hdc: HDC, client: RECT ) {
+		draw_buffered( hdc, client, |buffer_hdc| self.paint( buffer_hdc, client ) );
+	}
+	fn draw_sidebar_item( &self, painter: &Painter, layout: &SettingsLayout ) {
+		let nav = UiRect::from( layout.sidebar_nav );
+		painter.round_rect( nav, 7, self.theme.card );
+		painter.fill( UiRect::new( nav.left, nav.top + painter.scale( 10 ), nav.left + painter.scale( 4 ), nav.bottom - painter.scale( 10 ) ), self.theme.accent );
+		painter.text( "▦", UiRect::new( nav.left + painter.scale( 20 ), nav.top, nav.left + painter.scale( 56 ), nav.bottom ), 20, FW_NORMAL.0 as i32, self.theme.accent );
+		if layout.expanded_sidebar {
+			painter.text( &self.text.start, UiRect::new( nav.left + painter.scale( 60 ), nav.top, nav.right - painter.scale( 10 ), nav.bottom ), 16, FW_SEMIBOLD.0 as i32, self.theme.text );
+		}
+	}
+	fn draw_setting_row( &self, painter: &Painter, row: &SettingRowLayout ) {
+		let ( icon, text, value, minimum, maximum, ratio ) = self.setting_view( row.id );
+		painter.round_rect( row.card, 7, self.theme.card );
+		painter.text( icon, row.icon, 30, FW_NORMAL.0 as i32, self.theme.text );
+		painter.text( &text.title, row.title, 16, FW_SEMIBOLD.0 as i32, self.theme.text );
+		painter.text( &text.description, row.description, 13, FW_NORMAL.0 as i32, self.theme.secondary_text );
+		match row.kind {
+			ControlKind::Slider => self.draw_slider_control( painter, row.id, row.control, &value, minimum, maximum, ratio, matches!( self.pointer_drag, Some( PointerDrag::Slider( field ) ) if field == row.id ) ),
+			ControlKind::Choice => self.draw_choice_control( painter, row.control, &value ),
+		}
+	}
+	fn draw_slider_control( &self, painter: &Painter, field: SettingId, control: RECT, value: &str, minimum: &str, maximum: &str, ratio: f32, show_popup: bool ) {
+		let control = UiRect::from( control );
+		let ( track_left, track_right ) = slider_track_bounds( control.to_rect(), field, painter.dpi() );
+		let track_y = control.center_y() + painter.scale( 4 );
+		painter.text( minimum, UiRect::new( control.left, control.top, track_left - painter.scale( 10 ), control.bottom ), 12, FW_NORMAL.0 as i32, self.theme.secondary_text );
+		painter.right_text( maximum, UiRect::new( track_right + painter.scale( 10 ), control.top, control.right, control.bottom ), 12, FW_NORMAL.0 as i32, self.theme.secondary_text );
+		painter.round_rect( UiRect::new( track_left, track_y - painter.scale( 2 ), track_right, track_y + painter.scale( 2 ) ), 4, self.theme.track );
+		let thumb_x = track_left + ( ( track_right - track_left ) as f32 * ratio.clamp( 0.0, 1.0 ) ).round() as i32;
+		painter.round_rect( UiRect::new( track_left, track_y - painter.scale( 2 ), thumb_x, track_y + painter.scale( 2 ) ), 4, self.theme.accent );
+		painter.antialiased_thumb( thumb_x, track_y, 9, 5, self.theme.thumb_outer, self.theme.accent );
+		if show_popup {
+			self.draw_slider_popup( painter, value, track_left, track_right, thumb_x, track_y );
+		}
+	}
+	fn draw_slider_popup( &self, painter: &Painter, value: &str, track_left: i32, track_right: i32, thumb_x: i32, track_y: i32 ) {
+		let popup_width = painter.scale( ( value.chars().count() as i32 * 8 + 22 ).max( 50 ) );
+		let popup_height = painter.scale( 30 );
+		let popup_left = ( thumb_x - popup_width / 2 ).clamp( track_left, ( track_right - popup_width ).max( track_left ) );
+		let popup_bottom = track_y - painter.scale( 11 );
+		let popup = UiRect::new( popup_left, popup_bottom - popup_height, popup_left + popup_width, popup_bottom );
+		painter.round_rect( popup, 6, self.theme.card_border );
+		painter.round_rect( popup.inset( 1, 1 ), 6, self.theme.value_popup );
+		painter.center_text( value, popup, 13, FW_NORMAL.0 as i32, self.theme.text );
+	}
+	fn draw_choice_control( &self, painter: &Painter, control: RECT, value: &str ) {
+		let control = UiRect::from( control );
+		let width = painter.scale( 106 ).min( control.width() );
+		let area = UiRect::new( control.right - width, control.top, control.right, control.bottom );
+		painter.round_rect( area, 6, self.theme.track );
+		painter.text( value, UiRect::new( area.left + painter.scale( 14 ), area.top, area.right - painter.scale( 28 ), area.bottom ), 15, FW_SEMIBOLD.0 as i32, self.theme.text );
+		painter.text( "⌄", UiRect::new( area.right - painter.scale( 28 ), area.top - painter.scale( 2 ), area.right - painter.scale( 8 ), area.bottom ), 16, FW_NORMAL.0 as i32, self.theme.secondary_text );
+	}
+	fn draw_action_button( &self, painter: &Painter, area: RECT, text: &str, primary: bool, enabled: bool ) {
+		let background = if primary { self.theme.accent } else if enabled { self.theme.card } else { self.theme.track };
+		let foreground = if primary { rgb( 255, 255, 255 ) } else if enabled { self.theme.text } else { self.theme.secondary_text };
+		painter.round_rect( area, 7, background );
+		painter.center_text( text, area, 14, FW_SEMIBOLD.0 as i32, foreground );
+	}
+	fn setting_view( &self, id: SettingId ) -> ( &'static str, &SettingText, String, &'static str, &'static str, f32 ) {
+		match id {
+			SettingId::Overlay => ( "◐", &self.text.overlay_opacity, format!( "{}%", self.draft_preferences.start.overlay_opacity_percent ), "0%", "100%", self.draft_preferences.start.overlay_opacity_percent as f32 / 100.0 ),
+			SettingId::Blur => ( "≋", &self.text.background_blur, format!( "{}%", self.draft_preferences.start.blur_percent ), "0%", "100%", self.draft_preferences.start.blur_percent as f32 / 100.0 ),
+			SettingId::AnimationDuration => ( "↔", &self.text.animation_duration, format!( "{} ms", self.draft_preferences.start.opening_duration_ms ), "0 ms", "5000 ms", self.draft_preferences.start.opening_duration_ms as f32 / 5000.0 ),
+			SettingId::BarColumns => ( "▦", &self.text.group_columns, self.draft_preferences.start.tile_bar_columns.to_string(), "", "", 0.0 ),
+			SettingId::TilesPerRow => ( "≡", &self.text.tiles_per_row, self.draft_preferences.start.tiles_per_row.to_string(), "", "", 0.0 ),
+		}
+	}
+}
+
+unsafe fn create_window( state: *mut SettingsState, large_icon: windows::Win32::UI::WindowsAndMessaging::HICON, small_icon: windows::Win32::UI::WindowsAndMessaging::HICON ) -> WindowsResult< HWND > {
+	let module = unsafe { GetModuleHandleW( None )? };
+	let instance = HINSTANCE( module.0 );
+	let class = WNDCLASSW { lpfnWndProc: Some( settings_window_proc ), hInstance: instance, hIcon: large_icon, hCursor: unsafe { LoadCursorW( None, IDC_ARROW )? }, lpszClassName: w!( "EpStartSettingsWindow" ), ..Default::default() };
+	if unsafe { RegisterClassW( &class ) } == 0 { return Err( windows::core::Error::from_thread() ); }
+	let hwnd = unsafe { CreateWindowExW( Default::default(), w!( "EpStartSettingsWindow" ), w!( "ep_start" ), WS_OVERLAPPEDWINDOW, 0, 0, 1100, 720, None, None, Some( instance ), Some( state.cast::< c_void >() ) )? };
+	unsafe { SendMessageW( hwnd, WM_SETICON, Some( WPARAM( ICON_SMALL as usize ) ), Some( LPARAM( small_icon.0 as isize ) ) ); }
+	Ok( hwnd )
+}
+unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM ) -> LRESULT {
+	if message == WM_NCCREATE {
+		let creation = unsafe { &*( lparam.0 as *const CREATESTRUCTW ) };
+		let state = creation.lpCreateParams.cast::< SettingsState >();
+		unsafe {
+			( *state ).hwnd = hwnd;
+			SetWindowLongPtrW( hwnd, GWLP_USERDATA, state as isize );
+		}
+	}
+	let state = unsafe { GetWindowLongPtrW( hwnd, GWLP_USERDATA ) as *mut SettingsState };
+	if !state.is_null() {
+		match message {
+			WM_SHOW_SETTINGS => {
+				unsafe { ( *state ).show(); }
+				return LRESULT( 0 );
+			}
+			WM_CLOSE => {
+				unsafe { let _ = ShowWindow( hwnd, SW_HIDE ); }
+				trim_working_set();
+				return LRESULT( 0 );
+			}
+			WM_LBUTTONDOWN => {
+				let x = lparam.0 as i16 as i32;
+				let y = ( lparam.0 >> 16 ) as i16 as i32;
+				if unsafe { ( *state ).begin_scroll_drag( x, y ) } { return LRESULT( 0 ); }
+				if let Some( field ) = unsafe { ( *state ).hit_test_slider( x, y ) } {
+					unsafe {
+						( *state ).pointer_drag = Some( PointerDrag::Slider( field ) );
+						( *state ).update_slider( field, x );
+						SetCapture( hwnd );
+					}
+				}
+				return LRESULT( 0 );
+			}
+			WM_MOUSEMOVE => {
+				let x = lparam.0 as i16 as i32;
+				let y = ( lparam.0 >> 16 ) as i16 as i32;
+				match unsafe { ( *state ).pointer_drag } {
+					Some( PointerDrag::Slider( field ) ) => unsafe { ( *state ).update_slider( field, x ); },
+					Some( PointerDrag::Scrollbar( offset ) ) => unsafe { ( *state ).update_scroll_drag( y, offset ); },
+					None => {}
+				}
+				return LRESULT( 0 );
+			}
+			WM_LBUTTONUP => {
+				if unsafe { ( *state ).pointer_drag.take().is_some() } {
+					unsafe { let _ = ReleaseCapture(); }
+				} else {
+					let x = lparam.0 as i16 as i32;
+					let y = ( lparam.0 >> 16 ) as i16 as i32;
+					let layout = unsafe { ( *state ).layout() };
+					if layout.hit_undo( x, y ) {
+						unsafe { ( *state ).undo(); }
+					} else if layout.hit_save( x, y ) {
+						unsafe { ( *state ).save(); }
+					} else if let Some( field ) = unsafe { ( *state ).hit_test_choice( x, y ) } {
+						let mut point = POINT { x, y };
+						unsafe {
+							let _ = ClientToScreen( hwnd, &mut point );
+							( *state ).choose( field, point );
+						}
+					}
+				}
+				return LRESULT( 0 );
+			}
+			WM_PAINT => {
+				let mut paint = PAINTSTRUCT::default();
+				let mut client = RECT::default();
+				unsafe {
+					BeginPaint( hwnd, &mut paint );
+					let _ = GetClientRect( hwnd, &mut client );
+					( *state ).paint_buffered( paint.hdc, client );
+					let _ = EndPaint( hwnd, &paint );
+				}
+				return LRESULT( 0 );
+			}
+			WM_SIZE => {
+				unsafe {
+					let maximum = ( *state ).layout().scroll_max;
+					( *state ).scroll_y = ( *state ).scroll_y.clamp( 0, maximum );
+					let _ = InvalidateRect( Some( hwnd ), None, false );
+				}
+				return LRESULT( 0 );
+			}
+			WM_EXITSIZEMOVE => {
+				unsafe { ( *state ).save_window_size(); }
+				return LRESULT( 0 );
+			}
+			WM_MOUSEWHEEL => {
+				let delta = ( wparam.0 >> 16 ) as i16 as i32;
+				unsafe {
+					let position = ( *state ).scroll_y - delta / 120 * 72;
+					( *state ).scroll_to( position );
+				}
+				return LRESULT( 0 );
+			}
+			WM_GETMINMAXINFO => {
+				let dpi = unsafe { GetDpiForWindow( hwnd ) }.max( 96 ) as i32;
+				let info = unsafe { &mut *( lparam.0 as *mut MINMAXINFO ) };
+				info.ptMinTrackSize.x = scale( 620, dpi );
+				info.ptMinTrackSize.y = scale( 460, dpi );
+				return LRESULT( 0 );
+			}
+			WM_SETTINGCHANGE => {
+				unsafe { ( *state ).refresh_theme(); }
+				return LRESULT( 0 );
+			}
+			WM_DPICHANGED => {
+				let suggested = unsafe { &*( lparam.0 as *const RECT ) };
+				unsafe {
+					let _ = SetWindowPos( hwnd, None, suggested.left, suggested.top, suggested.right - suggested.left, suggested.bottom - suggested.top, SWP_NOACTIVATE );
+					let _ = InvalidateRect( Some( hwnd ), None, false );
+				}
+				return LRESULT( 0 );
+			}
+			WM_ERASEBKGND => { return LRESULT( 1 ); }
+			WM_DESTROY => { return LRESULT( 0 ); }
+			WM_NCDESTROY => { unsafe { SetWindowLongPtrW( hwnd, GWLP_USERDATA, 0 ); } }
+			_ => {}
+		}
+	}
+	unsafe { DefWindowProcW( hwnd, message, wparam, lparam ) }
+}
+
+fn slider_track_bounds( control: RECT, field: SettingId, dpi: i32 ) -> ( i32, i32 ) {
+	let label_width = match field { SettingId::AnimationDuration => scale( 64, dpi ), _ => scale( 44, dpi ) };
+	( control.left + label_width, control.right - label_width )
+}

@@ -1,0 +1,15 @@
+{
+	"settings": "设置",
+	"start": "开始菜单",
+	"menu_background": "菜单背景",
+	"tiles": "磁贴",
+	"overlay_opacity": { "title": "遮罩透明度", "description": "调整桌面上方暗色遮罩的透明程度" },
+	"background_blur": { "title": "背景模糊", "description": "实时模糊菜单后方的桌面背景" },
+	"animation_duration": { "title": "动画时长", "description": "同时调整菜单打开和关闭动画的持续时间" },
+	"group_columns": { "title": "磁贴栏显示列数", "description": "设置屏幕内并排显示的磁贴栏数量" },
+	"tiles_per_row": { "title": "组内每行磁贴数", "description": "设置每个磁贴组中一行容纳的磁贴数量" },
+	"undo": "撤销",
+	"save": "保存",
+	"open_settings": "打开设置",
+	"exit": "退出"
+}

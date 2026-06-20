@@ -1,0 +1,9 @@
+{
+	"start": {
+		"overlay_opacity_percent": 50,
+		"blur_percent": 0,
+		"opening_duration_ms": 250,
+		"tile_bar_columns": 3,
+		"tiles_per_row": 4
+	}
+}
