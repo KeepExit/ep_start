@@ -1,34 +1,27 @@
-//! ::  Project Path  ->  ep_start :: components.rs :: main
+//! ::  Project Path  ->  ep_start :: layout.rs :: layout
 //! ::  Created User  ->  Studio :: Ep
-//! ::  Created Time  ->  2026/6/21 00:57 周日
+//! ::  Created Time  ->  2026/6/21 06:44 周日
 
 
 use windows::Win32::Foundation::RECT;
 
 
-// 设置窗口的全局尺寸常量：侧栏宽度、内容留白、页头与固定底栏高度。
 const EXPANDED_SIDEBAR_WIDTH: i32 = 246;
 const COMPACT_SIDEBAR_WIDTH: i32 = 118;
 const CONTENT_MARGIN: i32 = 32;
 const HEADER_HEIGHT: i32 = 74;
 const FOOTER_HEIGHT: i32 = 68;
-
-// 设置内容区域的尺寸常量：分区标题、设置卡片间距以及分区间距。
 const SECTION_HEIGHT: i32 = 38;
 const GAP_HEIGHT: i32 = 64;
 const GAP_BOX_HEIGHT: i32 = 128;
 const ROW_GAP: i32 = 4;
 const SECTION_GAP: i32 = 24;
-
-// 自绘滚动条尺寸：距离窗口右侧的间距、轨道宽度和滑块最小高度。
 const SCROLLBAR_MARGIN: i32 = 9;
 const SCROLLBAR_WIDTH: i32 = 4;
 const SCROLLBAR_MIN_THUMB: i32 = 42;
 
-
-// 设置项标识：布局、绘制、命中测试和配置字段通过该标识对应。
 #[derive( Clone, Copy, Debug, Eq, PartialEq )]
-pub enum SettingId {
+pub(crate) enum SettingId {
 	Overlay,
 	Blur,
 	AnimationDuration,
@@ -36,18 +29,14 @@ pub enum SettingId {
 	TilesPerRow,
 }
 
-
-// 设置项使用的交互控件类型；新增控件类型时从这里扩展。
 #[derive( Clone, Copy, Debug, Eq, PartialEq )]
-pub enum ControlKind {
+pub(crate) enum ControlKind {
 	Slider,
 	Choice,
 }
 
-
-// 单个设置卡片区域：图标、标题、描述和右侧/下方控件均可独立微调。
 #[derive( Clone, Copy )]
-pub struct SettingRowLayout {
+pub(crate) struct SettingRowLayout {
 	pub id: SettingId,
 	pub kind: ControlKind,
 	pub card: RECT,
@@ -57,45 +46,33 @@ pub struct SettingRowLayout {
 	pub control: RECT,
 }
 
-
-// 自绘滚动条的轨道区域和可拖动滑块区域。
 #[derive( Clone, Copy )]
-pub struct ScrollbarLayout {
+pub(crate) struct ScrollbarLayout {
 	pub track: RECT,
 	pub thumb: RECT,
 }
 
-
-pub struct SettingsLayout {
-	// 左侧导航区域。
+pub(crate) struct SettingsLayout {
 	pub sidebar: RECT,
 	pub sidebar_nav: RECT,
 	pub settings_title: RECT,
-	// 右侧页面标题和两个设置分区标题。
 	pub page_title: RECT,
 	pub menu_section_title: RECT,
 	pub tile_section_title: RECT,
-	// 固定在窗口右下角的操作按钮。
 	pub undo_button: RECT,
 	pub save_button: RECT,
-	// 可滚动的设置卡片和自绘滚动条。
 	pub rows: Vec< SettingRowLayout >,
 	pub scrollbar: Option< ScrollbarLayout >,
-	// 响应式侧栏状态、内容裁剪边界和最大滚动距离。
 	pub expanded_sidebar: bool,
 	pub viewport_top: i32,
 	pub viewport_bottom: i32,
 	pub scroll_max: i32,
 }
 
-
 impl SettingsLayout {
-	pub fn calculate( client: RECT, dpi: i32, scroll_y: i32 ) -> Self {
-		// 基础窗口区域：统一转换为 96-DPI 逻辑尺寸后再计算布局。
+	pub(crate) fn calculate( client: RECT, dpi: i32, scroll_y: i32 ) -> Self {
 		let logical_width = unscale( client.right - client.left, dpi );
 		let logical_height = unscale( client.bottom - client.top, dpi );
-
-		// 侧栏与内容宽度：窗口较窄时切换为紧凑侧栏和纵向设置卡片。
 		let expanded_sidebar = logical_width >= 820;
 		let sidebar_width = if expanded_sidebar { EXPANDED_SIDEBAR_WIDTH } else { COMPACT_SIDEBAR_WIDTH };
 		let content_left = sidebar_width + CONTENT_MARGIN;
@@ -103,14 +80,10 @@ impl SettingsLayout {
 		let content_width = content_right - content_left;
 		let stacked = content_width < 620;
 		let row_height = if stacked { GAP_BOX_HEIGHT } else { GAP_HEIGHT };
-
-		// 内容滚动区域：固定页头和底部按钮不参与滚动。
 		let viewport_height = ( logical_height - HEADER_HEIGHT - FOOTER_HEIGHT ).max( 1 );
 		let body_height = SECTION_HEIGHT + row_height * 3 + ROW_GAP * 2 + SECTION_GAP + SECTION_HEIGHT + row_height * 2 + ROW_GAP + 28;
 		let scroll_max = ( body_height - viewport_height ).max( 0 );
 		let scroll_y = scroll_y.clamp( 0, scroll_max );
-
-		// 菜单背景分区：包含遮罩、模糊和动画三个设置项。
 		let mut y = HEADER_HEIGHT - scroll_y;
 		let menu_section_title = logical_rect( content_left, y, content_right, y + SECTION_HEIGHT, dpi );
 		y += SECTION_HEIGHT;
@@ -119,8 +92,6 @@ impl SettingsLayout {
 			rows.push( row_layout( id, kind, content_left, content_right, y, row_height, stacked, dpi ) );
 			y += row_height + ROW_GAP;
 		}
-
-		// 磁贴分区：包含磁贴栏列数和每行磁贴数。
 		y += SECTION_GAP - ROW_GAP;
 		let tile_section_title = logical_rect( content_left, y, content_right, y + SECTION_HEIGHT, dpi );
 		y += SECTION_HEIGHT;
@@ -128,12 +99,8 @@ impl SettingsLayout {
 			rows.push( row_layout( id, kind, content_left, content_right, y, row_height, stacked, dpi ) );
 			y += row_height + ROW_GAP;
 		}
-
-		// 固定操作区：按钮始终位于设置窗口右下角。
 		let save_button = logical_rect( logical_width - 128, logical_height - 54, logical_width - 24, logical_height - 14, dpi );
 		let undo_button = logical_rect( logical_width - 242, logical_height - 54, logical_width - 138, logical_height - 14, dpi );
-
-		// 自绘滚动条：根据当前可视高度、内容高度和滚动位置计算滑块。
 		let scrollbar = if scroll_max > 0 {
 			let track_top = HEADER_HEIGHT + 8;
 			let track_bottom = ( logical_height - FOOTER_HEIGHT - 8 ).max( track_top + 1 );
@@ -141,7 +108,10 @@ impl SettingsLayout {
 			let thumb_height = ( track_height * viewport_height / body_height.max( 1 ) ).clamp( SCROLLBAR_MIN_THUMB, track_height );
 			let travel = track_height - thumb_height;
 			let thumb_top = track_top + if scroll_max == 0 { 0 } else { travel * scroll_y / scroll_max };
-			Some( ScrollbarLayout { track: logical_rect( logical_width - SCROLLBAR_MARGIN - SCROLLBAR_WIDTH, track_top, logical_width - SCROLLBAR_MARGIN, track_bottom, dpi ), thumb: logical_rect( logical_width - SCROLLBAR_MARGIN - SCROLLBAR_WIDTH, thumb_top, logical_width - SCROLLBAR_MARGIN, thumb_top + thumb_height, dpi ) } )
+			Some( ScrollbarLayout {
+				track: logical_rect( logical_width - SCROLLBAR_MARGIN - SCROLLBAR_WIDTH, track_top, logical_width - SCROLLBAR_MARGIN, track_bottom, dpi ),
+				thumb: logical_rect( logical_width - SCROLLBAR_MARGIN - SCROLLBAR_WIDTH, thumb_top, logical_width - SCROLLBAR_MARGIN, thumb_top + thumb_height, dpi ),
+			} )
 		} else { None };
 		Self {
 			sidebar: logical_rect( 0, 0, sidebar_width, logical_height, dpi ),
@@ -160,42 +130,25 @@ impl SettingsLayout {
 			scroll_max,
 		}
 	}
-
-
-	pub fn row( &self, id: SettingId ) -> Option< &SettingRowLayout > {
+	pub(crate) fn row( &self, id: SettingId ) -> Option< &SettingRowLayout > {
 		self.rows.iter().find( |row| row.id == id )
 	}
-
-
-	// 设置控件命中区域：滑块和下拉选择共用卡片中的 control 区域。
-	pub fn hit_control( &self, x: i32, y: i32 ) -> Option< SettingId > {
+	pub(crate) fn hit_control( &self, x: i32, y: i32 ) -> Option< SettingId > {
 		self.rows.iter().find( |row| contains( row.control, x, y ) ).map( |row| row.id )
 	}
-
-
-	// 固定底部按钮命中区域。
-	pub fn hit_undo( &self, x: i32, y: i32 ) -> bool {
+	pub(crate) fn hit_undo( &self, x: i32, y: i32 ) -> bool {
 		contains( self.undo_button, x, y )
 	}
-
-
-	pub fn hit_save( &self, x: i32, y: i32 ) -> bool {
+	pub(crate) fn hit_save( &self, x: i32, y: i32 ) -> bool {
 		contains( self.save_button, x, y )
 	}
-
-
-	// 自绘滚动条命中与拖动位置换算。
-	pub fn hit_scroll_thumb( &self, x: i32, y: i32 ) -> bool {
+	pub(crate) fn hit_scroll_thumb( &self, x: i32, y: i32 ) -> bool {
 		self.scrollbar.is_some_and( |scrollbar| contains( scrollbar.thumb, x, y ) )
 	}
-
-
-	pub fn hit_scroll_track( &self, x: i32, y: i32 ) -> bool {
+	pub(crate) fn hit_scroll_track( &self, x: i32, y: i32 ) -> bool {
 		self.scrollbar.is_some_and( |scrollbar| contains( scrollbar.track, x, y ) )
 	}
-
-
-	pub fn scroll_from_thumb( &self, thumb_top: i32 ) -> i32 {
+	pub(crate) fn scroll_from_thumb( &self, thumb_top: i32 ) -> i32 {
 		let Some( scrollbar ) = self.scrollbar else { return 0; };
 		let travel = ( scrollbar.track.bottom - scrollbar.track.top ) - ( scrollbar.thumb.bottom - scrollbar.thumb.top );
 		if travel <= 0 { return 0; }
@@ -203,14 +156,12 @@ impl SettingsLayout {
 	}
 }
 
-
 fn row_layout( id: SettingId, kind: ControlKind, left: i32, right: i32, top: i32, height: i32, stacked: bool, dpi: i32 ) -> SettingRowLayout {
 	let card = logical_rect( left, top, right, top + height, dpi );
 	let center_y = top + height / 2;
 	let icon_size = 46;
 	let icon = logical_rect( left + 18, center_y - icon_size / 2, left + 64, center_y + icon_size / 2, dpi );
 	let text_left = left + 74;
-
 	let ( title, description, control ) = if stacked {
 		let title_top = top + 12;
 		let description_top = title_top + 29;
@@ -219,7 +170,7 @@ fn row_layout( id: SettingId, kind: ControlKind, left: i32, right: i32, top: i32
 		(
 			logical_rect( text_left, title_top, right - 22, title_top + 31, dpi ),
 			logical_rect( text_left, description_top, right - 22, description_top + 31, dpi ),
-			logical_rect( text_left, control_bottom - control_height, right - 22, control_bottom, dpi )
+			logical_rect( text_left, control_bottom - control_height, right - 22, control_bottom, dpi ),
 		)
 	} else {
 		let text_right = ( right - 324 ).max( text_left + 120 );
@@ -232,30 +183,23 @@ fn row_layout( id: SettingId, kind: ControlKind, left: i32, right: i32, top: i32
 		(
 			logical_rect( text_left, text_top, text_right, text_top + title_height, dpi ),
 			logical_rect( text_left, text_top + title_height - 2, text_right, text_top + title_height - 2 + description_height, dpi ),
-			logical_rect( control_left, center_y - control_height / 2, right - 22, center_y + control_height / 2, dpi )
+			logical_rect( control_left, center_y - control_height / 2, right - 22, center_y + control_height / 2, dpi ),
 		)
 	};
-
 	SettingRowLayout { id, kind, card, icon, title, description, control }
 }
-
 
 fn contains( rect: RECT, x: i32, y: i32 ) -> bool {
 	x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
-
-// RECT 创建与 DPI 换算辅助函数；所有布局常量均以 96 DPI 为基准。
 fn logical_rect( left: i32, top: i32, right: i32, bottom: i32, dpi: i32 ) -> RECT {
 	RECT { left: scale( left, dpi ), top: scale( top, dpi ), right: scale( right, dpi ), bottom: scale( bottom, dpi ) }
 }
 
-
-pub fn scale( value: i32, dpi: i32 ) -> i32 {
+pub(crate) fn scale( value: i32, dpi: i32 ) -> i32 {
 	value * dpi / 96
 }
-
-
-pub fn unscale( value: i32, dpi: i32 ) -> i32 {
+pub(crate) fn unscale( value: i32, dpi: i32 ) -> i32 {
 	value * 96 / dpi.max( 1 )
 }
