@@ -2,6 +2,8 @@
 //! ::  Created User  ->  Studio :: Ep
 //! ::  Created Time  ->  2026/6/19 22:30 周五
 
+pub mod injector_bridge;
+
 
 use configuration::ConfigurationStore;
 use localization::TextResources;

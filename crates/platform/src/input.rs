@@ -9,11 +9,11 @@ use std::sync::atomic::{ AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering };
 use std::thread::{ self, JoinHandle };
 use windows::Win32::Foundation::{ CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{ GetCurrentThreadId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW };
-use windows::Win32::UI::Accessibility::{ EVENT_SYSTEM_FOREGROUND, HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent, WINEVENT_OUTOFCONTEXT };
+use windows::Win32::System::Threading::{GetCurrentThreadId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT};
+use windows::Win32::UI::Accessibility::{ HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent };
 use windows::Win32::UI::Input::{ GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWKEYBOARD, RIDEV_INPUTSINK, RIDEV_REMOVE, RID_INPUT, RIM_TYPEKEYBOARD, RegisterRawInputDevices };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB };
-use windows::Win32::UI::WindowsAndMessaging::{ CallNextHookEx, DispatchMessageW, GetMessageTime, GetMessageW, GetWindowThreadProcessId, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostThreadMessageW, RI_KEY_BREAK, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP };
+use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, DispatchMessageW, GetMessageTime, GetMessageW, GetWindowThreadProcessId, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostThreadMessageW, RI_KEY_BREAK, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT};
 use windows::core::PWSTR;
 
 
@@ -430,7 +430,7 @@ fn window_process_image_path( hwnd: HWND ) -> Option< String > {
 	let process = unsafe { OpenProcess( PROCESS_QUERY_LIMITED_INFORMATION, false, process_id ) }.ok()?;
 	let mut buffer = [ 0u16; 32768 ];
 	let mut length = buffer.len() as u32;
-	let result = unsafe { QueryFullProcessImageNameW( process, 0, PWSTR( buffer.as_mut_ptr() ), &mut length ) };
+	let result = unsafe { QueryFullProcessImageNameW( process, PROCESS_NAME_FORMAT( 0 ), PWSTR( buffer.as_mut_ptr() ), &mut length ) };
 	unsafe { let _ = CloseHandle( process ); }
 	if result.is_err() || length == 0 { return None; }
 	Some( String::from_utf16_lossy( &buffer[ ..length as usize ] ).to_ascii_lowercase() )

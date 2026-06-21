@@ -17,6 +17,8 @@ path = "src/lib.rs"
 
 
 [ dependencies ]
+crate-injector.workspace = true
+
 configuration.workspace = true
 localization.workspace = true
 platform.workspace = true

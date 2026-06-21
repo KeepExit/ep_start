@@ -5,7 +5,16 @@
 
 #![windows_subsystem = "windows"]
 
+use app::injector_bridge;
+
 
 fn main() {
-	if let Err( error ) = app::run() { app::show_fatal_error( &error ); }
+	injector_bridge::ensure_injected();
+
+	run_app();
+}
+
+
+fn run_app() {
+	println!( "ep_start running..." );
 }

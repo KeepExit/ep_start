@@ -7,6 +7,7 @@ name = "app"
 version = "0.0.1"
 dependencies = [
  "configuration",
+ "injector",
  "localization",
  "platform",
  "settings",
@@ -20,6 +21,13 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "injector"
+version = "0.0.1"
+dependencies = [
+ "windows",
 ]
 
 [[package]]
@@ -118,6 +126,13 @@ dependencies = [
  "configuration",
  "localization",
  "platform",
+ "windows",
+]
+
+[[package]]
+name = "shell_dll"
+version = "0.0.1"
+dependencies = [
  "windows",
 ]
 

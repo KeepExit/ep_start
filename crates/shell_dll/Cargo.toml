@@ -1,0 +1,25 @@
+#! ::  Project Path  ->  ep_start :: Cargo.toml :: shell_dll
+#! ::  Created User  ->  Studio :: Ep
+#! ::  Created Time  ->  2026/6/21 22:42 周日
+
+
+[ package ]
+name = "shell_dll"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+
+[ lib ]
+crate-type = [ "cdylib" ]
+path = "src/lib.rs"
+
+
+[ dependencies ]
+windows = { version = "0.62", features = [
+	"Win32_Foundation",
+	"Win32_System_SystemServices",
+	"Win32_UI_WindowsAndMessaging"
+] }
