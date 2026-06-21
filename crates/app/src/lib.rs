@@ -53,6 +53,7 @@ impl Application {
 
 
 pub fn run() -> Result< (), String > {
+	if !platform::ensure_elevated()? { return Ok( () ); }
 	Application::new()?.run()
 }
 

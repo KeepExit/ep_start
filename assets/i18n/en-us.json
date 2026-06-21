@@ -1,15 +1,19 @@
 {
 	"settings": "Settings",
 	"start": "Start",
+	"behavior": "Behavior",
 	"menu_background": "Menu background",
 	"tiles": "Tiles",
 	"overlay_opacity": { "title": "Overlay opacity", "description": "Adjust the darkness of the overlay above the desktop" },
 	"background_blur": { "title": "Background blur", "description": "Blur the desktop background behind the menu in real time" },
 	"animation_duration": { "title": "Animation duration", "description": "Set the duration used by both opening and closing animations" },
+	"start_shortcut": { "title": "Open Start shortcut", "description": "Choose Win + Shift, or use Win to replace the native Start menu" },
 	"group_columns": { "title": "Tile bar columns", "description": "Set how many tile bars are arranged across the screen" },
 	"tiles_per_row": { "title": "Tiles per row", "description": "Set how many tiles fit in one row within each group" },
 	"undo": "Undo",
 	"save": "Save",
+	"shortcut_win_shift": "Win + Shift",
+	"shortcut_win": "Win",
 	"open_settings": "Open settings",
 	"exit": "Exit"
 }

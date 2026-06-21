@@ -3,20 +3,23 @@
 //! ::  Created Time  ->  2026/6/21 06:47 周日
 
 
-use crate::ui::layout::{ SettingId, scale };
-use crate::ui::geometry::UiRect;
+use crate::ui::geometry::{ UiRect, scale };
 use crate::ui::painter::Painter;
 use crate::ui::theme::SettingsTheme;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Gdi::FW_NORMAL;
 
 
-pub( crate ) fn draw_slider_control( painter: &Painter, theme: &SettingsTheme, field: SettingId, control: RECT, value: &str, minimum: &str, maximum: &str, ratio: f32, show_popup: bool ) {
+const LABEL_AREA_WIDTH: i32 = 64;
+const LABEL_TRACK_GAP: i32 = 10;
+
+
+pub( crate ) fn draw_slider_control( painter: &Painter, theme: &SettingsTheme, control: RECT, value: &str, minimum: &str, maximum: &str, ratio: f32, show_popup: bool ) {
 	let control = UiRect::from( control );
-	let ( track_left, track_right ) = slider_track_bounds( control.to_rect(), field, painter.dpi() );
+	let ( track_left, track_right ) = slider_track_bounds( control.to_rect(), painter.dpi() );
 	let track_y = control.center_y() + painter.scale( 4 );
-	painter.text( minimum, UiRect::new( control.left, control.top, track_left - painter.scale( 10 ), control.bottom ), 12, FW_NORMAL.0 as i32, theme.secondary_text );
-	painter.right_text( maximum, UiRect::new( track_right + painter.scale( 10 ), control.top, control.right, control.bottom ), 12, FW_NORMAL.0 as i32, theme.secondary_text );
+	painter.text( minimum, UiRect::new( control.left, control.top, track_left - painter.scale( LABEL_TRACK_GAP ), control.bottom ), 12, FW_NORMAL.0 as i32, theme.secondary_text );
+	painter.right_text( maximum, UiRect::new( track_right + painter.scale( LABEL_TRACK_GAP ), control.top, control.right, control.bottom ), 12, FW_NORMAL.0 as i32, theme.secondary_text );
 	painter.round_rect( UiRect::new( track_left, track_y - painter.scale( 2 ), track_right, track_y + painter.scale( 2 ) ), 4, theme.track );
 	let thumb_x = track_left + ( ( track_right - track_left ) as f32 * ratio.clamp( 0.0, 1.0 ) ).round() as i32;
 	painter.round_rect( UiRect::new( track_left, track_y - painter.scale( 2 ), thumb_x, track_y + painter.scale( 2 ) ), 4, theme.accent );
@@ -26,8 +29,8 @@ pub( crate ) fn draw_slider_control( painter: &Painter, theme: &SettingsTheme, f
 	}
 }
 
-pub( crate ) fn slider_ratio_from_x( control: RECT, field: SettingId, dpi: i32, x: i32 ) -> f32 {
-	let ( left, right ) = slider_track_bounds( control, field, dpi );
+pub( crate ) fn slider_ratio_from_x( control: RECT, dpi: i32, x: i32 ) -> f32 {
+	let ( left, right ) = slider_track_bounds( control, dpi );
 	( x - left ).clamp( 0, right - left ) as f32 / ( right - left ).max( 1 ) as f32
 }
 
@@ -42,7 +45,7 @@ fn draw_slider_popup( painter: &Painter, theme: &SettingsTheme, value: &str, tra
 	painter.center_text( value, popup, 13, FW_NORMAL.0 as i32, theme.text );
 }
 
-fn slider_track_bounds( control: RECT, field: SettingId, dpi: i32 ) -> ( i32, i32 ) {
-	let label_width = match field { SettingId::AnimationDuration => scale( 64, dpi ), _ => scale( 44, dpi ) };
+fn slider_track_bounds( control: RECT, dpi: i32 ) -> ( i32, i32 ) {
+	let label_width = scale( LABEL_AREA_WIDTH, dpi );
 	( control.left + label_width, control.right - label_width )
 }

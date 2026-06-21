@@ -4,8 +4,7 @@
 
 
 use super::TrayMenuEntry;
-use std::mem::size_of;
-use windows::Win32::UI::WindowsAndMessaging::{ AppendMenuW, CreatePopupMenu, DestroyMenu, HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_DISABLED, MFT_OWNERDRAW, MF_SEPARATOR, MF_STRING, MIIM_DATA, MIIM_FTYPE, MIIM_STATE };
+use windows::Win32::UI::WindowsAndMessaging::{ AppendMenuW, CreatePopupMenu, DestroyMenu, HMENU, MF_SEPARATOR, MF_STRING };
 use windows::core::PCWSTR;
 
 
@@ -14,15 +13,10 @@ pub struct PopupMenu {
 }
 
 
-pub const MENU_TOP_SPACER: usize = 0x4550_5350;
-
-
 impl PopupMenu {
 	pub fn create( source: &[ TrayMenuEntry ] ) -> Result< Self, String > {
 		let handle = unsafe { CreatePopupMenu() }.map_err( |error| format!( "创建托盘菜单失败：{}", error ) )?;
 		let popup = Self { handle };
-		let spacer = MENUITEMINFOW { cbSize: size_of::< MENUITEMINFOW >() as u32, fMask: MIIM_FTYPE | MIIM_STATE | MIIM_DATA, fType: MFT_OWNERDRAW, fState: MFS_DISABLED, dwItemData: MENU_TOP_SPACER, ..Default::default() };
-		unsafe { InsertMenuItemW( popup.handle, 0, true, &spacer ) }.map_err( |error| format!( "添加托盘菜单顶部间距失败：{}", error ) )?;
 		for entry in source {
 			let result = match entry {
 				TrayMenuEntry::Command { id, label } => {

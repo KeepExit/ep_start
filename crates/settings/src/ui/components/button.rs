@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Gdi::FW_SEMIBOLD;
 
 pub( crate ) fn draw_action_button( painter: &Painter, theme: &SettingsTheme, area: RECT, text: &str, primary: bool, enabled: bool ) {
 	let background = if primary { theme.accent } else if enabled { theme.card } else { theme.track };
-	let foreground = if primary { rgb( 255, 255, 255 ) } else if enabled { theme.text } else { theme.secondary_text };
+	let foreground = if primary { rgb( 0, 0, 0 ) } else if enabled { theme.text } else { theme.secondary_text };
 	painter.round_rect( area, 7, background );
 	painter.center_text( text, area, 14, FW_SEMIBOLD.0 as i32, foreground );
 }

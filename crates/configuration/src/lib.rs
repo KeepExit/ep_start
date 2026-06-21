@@ -11,11 +11,22 @@ use std::io::Write;
 use std::path::{ Path, PathBuf };
 
 
+#[derive( Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize )]
+#[serde( rename_all = "kebab-case" )]
+pub enum StartShortcut {
+	#[default]
+	WinShift,
+	Win,
+}
+
+
 #[derive( Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize )]
 pub struct StartPreferences {
 	pub overlay_opacity_percent: u8,
 	pub blur_percent: u8,
 	pub opening_duration_ms: u32,
+	#[serde( default )]
+	pub shortcut: StartShortcut,
 	#[serde( default = "default_bar_columns", alias = "tile_group_columns" )]
 	pub tile_bar_columns: u8,
 	#[serde( default = "default_tiles_per_row" )]
@@ -99,4 +110,24 @@ fn candidate_paths() -> Vec< PathBuf > {
 		if let Some( directory ) = executable.parent() { paths.push( directory.join( "assets" ).join( "settings.json" ) ); }
 	}
 	paths
+}
+
+
+#[cfg( test )]
+mod tests {
+	use super::*;
+
+
+	#[test]
+	fn missing_shortcut_uses_win_shift() {
+		let preferences: AppPreferences = serde_json::from_str( r#"{"start":{"overlay_opacity_percent":50,"blur_percent":0,"opening_duration_ms":250,"tile_bar_columns":3,"tiles_per_row":4}}"# ).unwrap();
+		assert_eq!( preferences.start.shortcut, StartShortcut::WinShift );
+	}
+
+
+	#[test]
+	fn shortcut_names_are_stable() {
+		assert_eq!( serde_json::to_string( &StartShortcut::WinShift ).unwrap(), "\"win-shift\"" );
+		assert_eq!( serde_json::to_string( &StartShortcut::Win ).unwrap(), "\"win\"" );
+	}
 }

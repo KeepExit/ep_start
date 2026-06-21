@@ -245,7 +245,7 @@ mod tests {
 	#[test]
 	fn tile_slot_uses_rows_and_columns() {
 		let config = StartConfig { bars: vec![ TileBar { title: "bar".to_string(), tiles: ( 0..8 ).map( tile ).collect() } ] };
-		let preferences = StartPreferences { overlay_opacity_percent: 50, blur_percent: 0, opening_duration_ms: 350, tile_bar_columns: 1, tiles_per_row: 4 };
+		let preferences = StartPreferences { overlay_opacity_percent: 50, blur_percent: 0, opening_duration_ms: 350, shortcut: configuration::StartShortcut::WinShift, tile_bar_columns: 1, tiles_per_row: 4 };
 		let mut layout = TileLayout::default();
 		layout.calculate( 1200.0, 800.0, &config, &preferences, None );
 		let first = layout.tile_rect( TileAddress { bar_index: 0, tile_index: 0 } ).unwrap();

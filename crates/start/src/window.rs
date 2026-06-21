@@ -11,8 +11,8 @@ use crate::layout::{ DragSource, DragVisual, DropTarget, FolderTileAddress, Tile
 use crate::overlay::OverlaySurface;
 use crate::renderer::Renderer;
 use crate::transition::DesktopTransition;
-use configuration::StartPreferences;
-use platform::{ ForegroundActivation, ForegroundChangeObserver, GlobalInputAction, GlobalInputBinding, GlobalInputManager, MonitorGeometry, show_error_dialog, trim_working_set };
+use configuration::{ StartPreferences, StartShortcut };
+use platform::{ ForegroundActivation, ForegroundChangeObserver, GlobalInputAction, GlobalInputBinding, GlobalInputManager, GlobalStartShortcut, MonitorGeometry, show_error_dialog, trim_working_set };
 use std::ffi::c_void;
 use std::mem::size_of;
 use windows::Win32::Foundation::{ HINSTANCE, HWND, LPARAM, LRESULT, WPARAM };
@@ -34,7 +34,9 @@ const WM_START_FOREGROUND_CHANGED: u32 = WM_APP + 6;
 const WM_START_UPDATE_PREFERENCES: u32 = WM_APP + 7;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const BACKDROP_TIMER_ID: usize = 1;
+const TASKBAR_REFOCUS_TIMER_ID: usize = 2;
 const BACKDROP_FRAME_INTERVAL_MS: u32 = 33;
+const TASKBAR_REFOCUS_DELAY_MS: u32 = 50;
 
 
 pub struct WindowHost {
@@ -105,6 +107,7 @@ impl WindowHost {
 		unsafe { ( *host.state ).prepare_layout(); }
 		let hwnd = unsafe { ( *state_pointer ).hwnd };
 		let binding = input_manager.bind_start_surface( hwnd, WM_START_TOGGLE, WM_START_DISMISS )?;
+		binding.set_shortcut( input_shortcut( preferences.shortcut ) );
 		let foreground_observer = ForegroundChangeObserver::watch( hwnd, WM_START_FOREGROUND_CHANGED )?;
 		unsafe {
 			( *host.state ).input = Some( binding );
@@ -202,6 +205,7 @@ impl WindowState {
 
 
 	fn begin_open( &mut self ) {
+		unsafe { let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID ); }
 		let geometry = MonitorGeometry::from_cursor().or_else( |_| MonitorGeometry::from_window( self.hwnd ) );
 		let Ok( geometry ) = geometry else { return; };
 		let transition_ready = self.transition.capture( &geometry ).is_ok();
@@ -229,6 +233,7 @@ impl WindowState {
 
 
 	fn begin_close( &mut self ) {
+		unsafe { let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID ); }
 		self.animation.close();
 		if self.animation.state() == VisibilityState::Hidden { self.finish_close(); } else { self.request_animation_frame(); }
 	}
@@ -272,6 +277,7 @@ impl WindowState {
 
 	fn update_preferences( &mut self, mut preferences: StartPreferences ) {
 		preferences.normalize();
+		if let Some( input ) = &self.input { input.set_shortcut( input_shortcut( preferences.shortcut ) ); }
 		self.preferences = preferences;
 		self.animation.set_duration( preferences.opening_duration_ms );
 		let logical_width = self.client_size.width as f32 * 96.0 / self.dpi;
@@ -287,7 +293,10 @@ impl WindowState {
 
 	fn finish_close( &mut self ) {
 		if let Some( observer ) = &mut self.foreground_observer { observer.set_enabled( false ); }
-		unsafe { let _ = KillTimer( Some( self.hwnd ), BACKDROP_TIMER_ID ); }
+		unsafe {
+			let _ = KillTimer( Some( self.hwnd ), BACKDROP_TIMER_ID );
+			let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID );
+		}
 		drop( self.activation.take() );
 		unsafe { let _ = ShowWindow( self.hwnd, SW_HIDE ); }
 		self.backdrop.hide();
@@ -306,10 +315,28 @@ impl WindowState {
 
 
 	fn handle_foreground_change( &mut self ) {
-		if !self.animation.is_surface_present() { return; }
+		if !matches!( self.animation.state(), VisibilityState::Opening | VisibilityState::Visible ) { return; }
 		let foreground = unsafe { GetForegroundWindow() };
-		if foreground.is_invalid() || foreground == self.hwnd || is_taskbar_transient_window( foreground ) { return; }
+		if foreground.is_invalid() || foreground == self.hwnd { return; }
+		if is_taskbar_host_window( foreground ) {
+			unsafe { let _ = SetTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID, TASKBAR_REFOCUS_DELAY_MS, None ); }
+			return;
+		}
+		if is_taskbar_preview_window( foreground ) { return; }
+		unsafe { let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID ); }
 		self.begin_close();
+	}
+
+
+	fn confirm_taskbar_interaction( &mut self ) {
+		unsafe { let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID ); }
+		if !matches!( self.animation.state(), VisibilityState::Opening | VisibilityState::Visible ) { return; }
+		let foreground = unsafe { GetForegroundWindow() };
+		if is_taskbar_host_window( foreground ) {
+			if let Some( activation ) = &self.activation { activation.reactivate(); }
+		} else if !foreground.is_invalid() && foreground != self.hwnd && !is_taskbar_preview_window( foreground ) {
+			self.begin_close();
+		}
 	}
 
 
@@ -568,7 +595,10 @@ unsafe extern "system" fn window_proc( hwnd: HWND, message: u32, wparam: WPARAM,
 				unsafe { ( *state ).update_preferences( preferences ); }
 				return LRESULT( 0 );
 			}
-			WM_TIMER => { if wparam.0 == BACKDROP_TIMER_ID { unsafe { ( *state ).update_backdrop_frame(); } return LRESULT( 0 ); } }
+			WM_TIMER => {
+				if wparam.0 == BACKDROP_TIMER_ID { unsafe { ( *state ).update_backdrop_frame(); } return LRESULT( 0 ); }
+				if wparam.0 == TASKBAR_REFOCUS_TIMER_ID { unsafe { ( *state ).confirm_taskbar_interaction(); } return LRESULT( 0 ); }
+			}
 			WM_LBUTTONDOWN => {
 				let x = lparam.0 as i16 as f32;
 				let y = ( lparam.0 >> 16 ) as i16 as f32;
@@ -614,12 +644,29 @@ unsafe extern "system" fn window_proc( hwnd: HWND, message: u32, wparam: WPARAM,
 }
 
 
-fn is_taskbar_transient_window( hwnd: HWND ) -> bool {
+fn window_class_name( hwnd: HWND ) -> String {
 	let mut class_name = [ 0u16; 128 ];
 	let length = unsafe { GetClassNameW( hwnd, &mut class_name ) };
-	if length <= 0 { return false; }
-	let class_name = String::from_utf16_lossy( &class_name[ ..length as usize ] );
-	matches!( class_name.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "TaskListThumbnailWnd" | "TaskListThumbnailWndXaml" )
+	if length <= 0 { return String::new(); }
+	String::from_utf16_lossy( &class_name[ ..length as usize ] )
+}
+
+
+fn is_taskbar_host_window( hwnd: HWND ) -> bool {
+	matches!( window_class_name( hwnd ).as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" )
+}
+
+
+fn is_taskbar_preview_window( hwnd: HWND ) -> bool {
+	matches!( window_class_name( hwnd ).as_str(), "TaskListThumbnailWnd" | "TaskListThumbnailWndXaml" )
+}
+
+
+fn input_shortcut( shortcut: StartShortcut ) -> GlobalStartShortcut {
+	match shortcut {
+		StartShortcut::WinShift => GlobalStartShortcut::WinShift,
+		StartShortcut::Win => GlobalStartShortcut::Win,
+	}
 }
 
 

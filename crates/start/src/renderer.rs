@@ -19,6 +19,7 @@ use windows::core::{ Result, w };
 
 const TITLE_INSET: f32 = 10.0;
 const PLACEHOLDER_SIZE: f32 = 52.0;
+const INTERACTION_ALPHA: f32 = 1.0 / 255.0;
 
 
 struct DeviceResources {
@@ -67,7 +68,7 @@ impl Renderer {
 			let bounds = RECT { left: 0, top: 0, right: size.width as i32, bottom: size.height as i32 };
 			device.target.BindDC( device.surface.dc, &bounds )?;
 			device.target.BeginDraw();
-			device.target.Clear( Some( &D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 } ) );
+			device.target.Clear( Some( &D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: INTERACTION_ALPHA } ) );
 			for bar_region in &layout.bars {
 				if matches!( drag.as_ref().map( |value| value.preview_source ), Some( DragSource::Bar( bar_index ) ) if bar_index == bar_region.bar_index ) { continue; }
 				let progress = frame.group_progress( bar_region.bar_index );

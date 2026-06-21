@@ -4,9 +4,9 @@
 			"title": "常用",
 			"tiles": [
 				{
-					"title": "Windows 设置",
-					"target": "ms-settings:",
-					"color": "#744DA9"
+					"title": "记事本",
+					"target": "notepad.exe",
+					"color": "#0067C0"
 				},
 				{
 					"title": "文件资源管理器",
@@ -19,9 +19,9 @@
 					"color": "#107C10"
 				},
 				{
-					"title": "记事本",
-					"target": "notepad.exe",
-					"color": "#0067C0"
+					"title": "Windows 设置",
+					"target": "ms-settings:",
+					"color": "#744DA9"
 				}
 			]
 		}

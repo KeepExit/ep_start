@@ -31,6 +31,11 @@ impl ForegroundActivation {
 	}
 
 
+	pub fn reactivate( &self ) {
+		activate_window( self.target );
+	}
+
+
 	pub fn restore( &mut self ) {
 		if !self.restore_enabled { return; }
 		self.restore_enabled = false;

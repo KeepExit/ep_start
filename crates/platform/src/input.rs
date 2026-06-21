@@ -12,8 +12,8 @@ use windows::Win32::Foundation::{ HINSTANCE, HWND, LPARAM, LRESULT, WPARAM };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::{ GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWKEYBOARD, RIDEV_INPUTSINK, RIDEV_REMOVE, RID_INPUT, RIM_TYPEKEYBOARD, RegisterRawInputDevices };
-use windows::Win32::UI::Input::KeyboardAndMouse::{ GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB };
-use windows::Win32::UI::WindowsAndMessaging::{ CallNextHookEx, DispatchMessageW, GetMessageTime, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostThreadMessageW, RI_KEY_BREAK, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP };
+use windows::Win32::UI::Input::KeyboardAndMouse::{ GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB };
+use windows::Win32::UI::WindowsAndMessaging::{ CallNextHookEx, DispatchMessageW, GetMessageTime, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostThreadMessageW, RI_KEY_BREAK, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP };
 
 
 const LEFT_SHIFT_DOWN: u8 = 1 << 0;
@@ -31,6 +31,13 @@ static MODIFIER_STATE: AtomicU8 = AtomicU8::new( 0 );
 static RAW_MODIFIER_STATE: AtomicU8 = AtomicU8::new( 0 );
 static LAST_TOGGLE_EVENT_TIME: AtomicU32 = AtomicU32::new( 0 );
 static ESCAPE_CAPTURED: AtomicBool = AtomicBool::new( false );
+static SHORTCUT_MODE: AtomicU8 = AtomicU8::new( GlobalStartShortcut::WinShift as u8 );
+static WIN_SEQUENCE_USED: AtomicBool = AtomicBool::new( false );
+static WIN_SEQUENCE_HANDLED: AtomicBool = AtomicBool::new( false );
+static WIN_SEQUENCE_REPLAYED: AtomicBool = AtomicBool::new( false );
+static PENDING_WIN_KEY: AtomicU32 = AtomicU32::new( 0 );
+static RAW_WIN_SEQUENCE_USED: AtomicBool = AtomicBool::new( false );
+static RAW_WIN_SEQUENCE_HANDLED: AtomicBool = AtomicBool::new( false );
 
 
 pub struct GlobalInputManager {
@@ -48,6 +55,14 @@ pub struct GlobalInputBinding {
 pub enum GlobalInputAction {
 	Toggle,
 	Dismiss,
+}
+
+
+#[derive( Clone, Copy, Debug, Eq, PartialEq )]
+#[repr( u8 )]
+pub enum GlobalStartShortcut {
+	WinShift = 0,
+	Win = 1,
 }
 
 
@@ -109,6 +124,12 @@ fn run_hook_thread( ready: SyncSender< Result< u32, String > > ) {
 
 
 impl GlobalInputBinding {
+	pub fn set_shortcut( &self, shortcut: GlobalStartShortcut ) {
+		SHORTCUT_MODE.store( shortcut as u8, Ordering::SeqCst );
+		reset_shortcut_state();
+	}
+
+
 	pub fn set_surface_visible( &self, visible: bool ) {
 		SURFACE_VISIBLE.store( visible, Ordering::SeqCst );
 	}
@@ -119,15 +140,10 @@ impl GlobalInputBinding {
 		let key_down = keyboard.Flags as u32 & RI_KEY_BREAK == 0;
 		if keyboard.VKey == VK_ESCAPE.0 && key_down && SURFACE_VISIBLE.load( Ordering::SeqCst ) { return Some( GlobalInputAction::Dismiss ); }
 		let modifier = raw_modifier_mask( &keyboard );
-		if modifier == 0 { return None; }
 		let previous = RAW_MODIFIER_STATE.load( Ordering::SeqCst );
 		let current = if key_down { previous | modifier } else { previous & !modifier };
 		RAW_MODIFIER_STATE.store( current, Ordering::SeqCst );
-		if !chord_complete( previous ) && chord_complete( current ) {
-			RAW_MODIFIER_STATE.store( 0, Ordering::SeqCst );
-			if claim_toggle_event( unsafe { GetMessageTime() } as u32 ) { return Some( GlobalInputAction::Toggle ); }
-		}
-		None
+		handle_raw_shortcut_event( keyboard.VKey, modifier, previous, current, key_down, unsafe { GetMessageTime() } as u32 )
 	}
 }
 
@@ -146,15 +162,13 @@ impl Drop for GlobalInputBinding {
 unsafe extern "system" fn keyboard_hook( code: i32, wparam: WPARAM, lparam: LPARAM ) -> LRESULT {
 	if code == HC_ACTION as i32 {
 		let event = unsafe { &*( lparam.0 as *const KBDLLHOOKSTRUCT ) };
+		if event.flags.0 & LLKHF_INJECTED.0 != 0 { return unsafe { CallNextHookEx( None, code, wparam, lparam ) }; }
 		let message = wparam.0 as u32;
 		let key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
 		let key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
 		if key_down && is_foreground_switch_key( event.vkCode as u16 ) { crate::foreground::note_activation_input( event.time ); }
 		if event.vkCode as u16 == VK_ESCAPE.0 && handle_escape( key_down, key_up ) { return LRESULT( 1 ); }
-		let modifier = modifier_mask( event.vkCode, event.scanCode );
-		if modifier != 0 && ( key_down || key_up ) {
-			if handle_modifier_event( modifier, key_down ) && claim_toggle_event( event.time ) { post_message( TOGGLE_MESSAGE.load( Ordering::SeqCst ) ); }
-		}
+		if ( key_down || key_up ) && handle_shortcut_event( event.vkCode as u16, event.scanCode, key_down, event.time ) { return LRESULT( 1 ); }
 	}
 	unsafe { CallNextHookEx( None, code, wparam, lparam ) }
 }
@@ -175,17 +189,110 @@ fn handle_escape( key_down: bool, key_up: bool ) -> bool {
 }
 
 
-fn handle_modifier_event( modifier: u8, key_down: bool ) -> bool {
+fn handle_shortcut_event( key: u16, scan_code: u32, key_down: bool, event_time: u32 ) -> bool {
+	let modifier = modifier_mask( key as u32, scan_code );
 	let previous = MODIFIER_STATE.load( Ordering::SeqCst );
-	let was_complete = chord_complete( previous );
 	let current = if key_down { previous | modifier } else { previous & !modifier };
-	let is_complete = chord_complete( current );
 	MODIFIER_STATE.store( current, Ordering::SeqCst );
-	if !was_complete && is_complete {
-		MODIFIER_STATE.store( 0, Ordering::SeqCst );
-		return true;
+	let win_key = modifier & WIN_DOWN != 0;
+	let shortcut = current_shortcut();
+	if shortcut == GlobalStartShortcut::Win { return handle_win_shortcut_event( key, previous, current, win_key, key_down, event_time ); }
+	if key_down && win_key && previous & WIN_DOWN == 0 {
+		WIN_SEQUENCE_USED.store( false, Ordering::SeqCst );
+		WIN_SEQUENCE_HANDLED.store( false, Ordering::SeqCst );
+	}
+	if key_down && !win_key && previous & WIN_DOWN != 0 && modifier & SHIFT_DOWN == 0 {
+		WIN_SEQUENCE_USED.store( true, Ordering::SeqCst );
+	}
+	if !chord_complete( previous ) && chord_complete( current ) {
+		WIN_SEQUENCE_HANDLED.store( true, Ordering::SeqCst );
+		if claim_toggle_event( event_time ) { post_message( TOGGLE_MESSAGE.load( Ordering::SeqCst ) ); }
+	}
+	if !key_down && win_key && current & WIN_DOWN == 0 {
+		let used = WIN_SEQUENCE_USED.swap( false, Ordering::SeqCst );
+		let handled = WIN_SEQUENCE_HANDLED.swap( false, Ordering::SeqCst );
+		if !handled && !used && SURFACE_VISIBLE.load( Ordering::SeqCst ) { post_message( DISMISS_MESSAGE.load( Ordering::SeqCst ) ); }
 	}
 	false
+}
+
+
+fn handle_win_shortcut_event( key: u16, previous: u8, current: u8, win_key: bool, key_down: bool, event_time: u32 ) -> bool {
+	if win_key {
+		if key_down {
+			if previous & WIN_DOWN == 0 {
+				WIN_SEQUENCE_USED.store( false, Ordering::SeqCst );
+				WIN_SEQUENCE_REPLAYED.store( false, Ordering::SeqCst );
+				PENDING_WIN_KEY.store( key as u32, Ordering::SeqCst );
+			}
+			return true;
+		}
+		if current & WIN_DOWN != 0 { return true; }
+		let used = WIN_SEQUENCE_USED.swap( false, Ordering::SeqCst );
+		let replayed = WIN_SEQUENCE_REPLAYED.swap( false, Ordering::SeqCst );
+		PENDING_WIN_KEY.store( 0, Ordering::SeqCst );
+		if !used && !replayed && claim_toggle_event( event_time ) { post_message( TOGGLE_MESSAGE.load( Ordering::SeqCst ) ); }
+		return !replayed;
+	}
+	if key_down && previous & WIN_DOWN != 0 {
+		WIN_SEQUENCE_USED.store( true, Ordering::SeqCst );
+		if !WIN_SEQUENCE_REPLAYED.load( Ordering::SeqCst ) {
+			let win_key = PENDING_WIN_KEY.load( Ordering::SeqCst ) as u16;
+			if win_key != 0 && replay_win_combination( win_key, key ) {
+				WIN_SEQUENCE_REPLAYED.store( true, Ordering::SeqCst );
+				return true;
+			}
+		}
+	}
+	false
+}
+
+
+fn handle_raw_shortcut_event( _key: u16, modifier: u8, previous: u8, current: u8, key_down: bool, event_time: u32 ) -> Option< GlobalInputAction > {
+	if current_shortcut() == GlobalStartShortcut::Win { return None; }
+	let win_key = modifier & WIN_DOWN != 0;
+	if key_down && win_key && previous & WIN_DOWN == 0 {
+		RAW_WIN_SEQUENCE_USED.store( false, Ordering::SeqCst );
+		RAW_WIN_SEQUENCE_HANDLED.store( false, Ordering::SeqCst );
+	}
+	let shortcut = current_shortcut();
+	if key_down && !win_key && previous & WIN_DOWN != 0 && !( shortcut == GlobalStartShortcut::WinShift && modifier & SHIFT_DOWN != 0 ) {
+		RAW_WIN_SEQUENCE_USED.store( true, Ordering::SeqCst );
+	}
+	if shortcut == GlobalStartShortcut::WinShift && !chord_complete( previous ) && chord_complete( current ) {
+		RAW_WIN_SEQUENCE_HANDLED.store( true, Ordering::SeqCst );
+		if claim_toggle_event( event_time ) { return Some( GlobalInputAction::Toggle ); }
+	}
+	if !key_down && win_key && current & WIN_DOWN == 0 {
+		let used = RAW_WIN_SEQUENCE_USED.swap( false, Ordering::SeqCst );
+		let handled = RAW_WIN_SEQUENCE_HANDLED.swap( false, Ordering::SeqCst );
+		return match shortcut {
+			GlobalStartShortcut::WinShift if !handled && !used && SURFACE_VISIBLE.load( Ordering::SeqCst ) => Some( GlobalInputAction::Dismiss ),
+			GlobalStartShortcut::Win if !used && !handled && claim_toggle_event( event_time ) => Some( GlobalInputAction::Toggle ),
+			_ => None,
+		};
+	}
+	None
+}
+
+
+fn current_shortcut() -> GlobalStartShortcut {
+	if SHORTCUT_MODE.load( Ordering::SeqCst ) == GlobalStartShortcut::Win as u8 { GlobalStartShortcut::Win } else { GlobalStartShortcut::WinShift }
+}
+
+
+fn replay_win_combination( win_key: u16, key: u16 ) -> bool {
+	let inputs = [ keyboard_input( VIRTUAL_KEY( win_key ), Default::default() ), keyboard_input( VIRTUAL_KEY( key ), Default::default() ) ];
+	let inserted = unsafe { SendInput( &inputs, size_of::< INPUT >() as i32 ) };
+	if inserted == inputs.len() as u32 { return true; }
+	let cleanup = [ keyboard_input( VIRTUAL_KEY( key ), KEYEVENTF_KEYUP ), keyboard_input( VIRTUAL_KEY( win_key ), KEYEVENTF_KEYUP ) ];
+	unsafe { let _ = SendInput( &cleanup, size_of::< INPUT >() as i32 ); }
+	false
+}
+
+
+fn keyboard_input( key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS ) -> INPUT {
+	INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: key, dwFlags: flags, ..Default::default() } } }
 }
 
 
@@ -248,14 +355,25 @@ fn post_message( message: u32 ) {
 
 fn claim_toggle_event( event_time: u32 ) -> bool {
 	let previous = LAST_TOGGLE_EVENT_TIME.swap( event_time, Ordering::SeqCst );
-	previous == 0 || ( event_time.wrapping_sub( previous ) > 50 && previous.wrapping_sub( event_time ) > 50 )
+	previous == 0 || ( event_time.wrapping_sub( previous ) > 250 && previous.wrapping_sub( event_time ) > 250 )
+}
+
+
+fn reset_shortcut_state() {
+	MODIFIER_STATE.store( 0, Ordering::SeqCst );
+	RAW_MODIFIER_STATE.store( 0, Ordering::SeqCst );
+	LAST_TOGGLE_EVENT_TIME.store( 0, Ordering::SeqCst );
+	WIN_SEQUENCE_USED.store( false, Ordering::SeqCst );
+	WIN_SEQUENCE_HANDLED.store( false, Ordering::SeqCst );
+	WIN_SEQUENCE_REPLAYED.store( false, Ordering::SeqCst );
+	PENDING_WIN_KEY.store( 0, Ordering::SeqCst );
+	RAW_WIN_SEQUENCE_USED.store( false, Ordering::SeqCst );
+	RAW_WIN_SEQUENCE_HANDLED.store( false, Ordering::SeqCst );
 }
 
 
 fn reset_input_state() {
 	SURFACE_VISIBLE.store( false, Ordering::SeqCst );
-	MODIFIER_STATE.store( 0, Ordering::SeqCst );
-	RAW_MODIFIER_STATE.store( 0, Ordering::SeqCst );
-	LAST_TOGGLE_EVENT_TIME.store( 0, Ordering::SeqCst );
+	reset_shortcut_state();
 	ESCAPE_CAPTURED.store( false, Ordering::SeqCst );
 }

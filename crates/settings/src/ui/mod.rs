@@ -5,7 +5,7 @@
 
 pub( crate ) mod components;
 pub( crate ) mod geometry;
-pub( crate ) mod layout;
 pub( crate ) mod paint_buffer;
 pub( crate ) mod painter;
+pub( crate ) mod settings;
 pub( crate ) mod theme;

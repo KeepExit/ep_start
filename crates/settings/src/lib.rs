@@ -5,7 +5,11 @@
 
 mod ui;
 mod window;
-mod window_state;
+mod size;
+mod host;
+mod state;
+mod paint;
+mod event;
 
 
 pub use window::{ SettingsController, SettingsRuntime };
