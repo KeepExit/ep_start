@@ -27,6 +27,8 @@ pub struct StartPreferences {
 	pub opening_duration_ms: u32,
 	#[serde( default )]
 	pub shortcut: StartShortcut,
+	#[serde( default = "default_open_on_start_button_click" )]
+	pub open_on_start_button_click: bool,
 	#[serde( default = "default_bar_columns", alias = "tile_group_columns" )]
 	pub tile_bar_columns: u8,
 	#[serde( default = "default_tiles_per_row" )]
@@ -98,6 +100,11 @@ const fn default_bar_columns() -> u8 {
 }
 
 
+const fn default_open_on_start_button_click() -> bool {
+	true
+}
+
+
 const fn default_tiles_per_row() -> u8 {
 	4
 }
@@ -122,6 +129,7 @@ mod tests {
 	fn missing_shortcut_uses_win_shift() {
 		let preferences: AppPreferences = serde_json::from_str( r#"{"start":{"overlay_opacity_percent":50,"blur_percent":0,"opening_duration_ms":250,"tile_bar_columns":3,"tiles_per_row":4}}"# ).unwrap();
 		assert_eq!( preferences.start.shortcut, StartShortcut::WinShift );
+		assert!( preferences.start.open_on_start_button_click );
 	}
 
 

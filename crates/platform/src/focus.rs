@@ -6,7 +6,7 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::AttachThreadInput;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ SetActiveWindow, SetFocus };
-use windows::Win32::UI::WindowsAndMessaging::{ BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow };
+use windows::Win32::UI::WindowsAndMessaging::{ BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SW_RESTORE, SetForegroundWindow, ShowWindow };
 
 
 pub struct ForegroundActivation {
@@ -33,6 +33,17 @@ impl ForegroundActivation {
 
 	pub fn reactivate( &self ) {
 		activate_window( self.target );
+	}
+
+
+	pub fn restore_minimized_previous( &mut self ) -> bool {
+		let Some( previous ) = self.previous else { return false; };
+		if !unsafe { IsWindow( Some( previous ) ) }.as_bool() || !unsafe { IsIconic( previous ) }.as_bool() { return false; }
+		self.restore_enabled = false;
+		self.previous = None;
+		unsafe { let _ = ShowWindow( previous, SW_RESTORE ); }
+		activate_window( previous );
+		true
 	}
 
 

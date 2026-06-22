@@ -70,11 +70,6 @@ impl DesktopTransition {
 	}
 
 
-	pub fn cover_window( &self ) -> Option< HWND > {
-		self.is_ready().then_some( self.hwnd )
-	}
-
-
 	pub fn discard( &mut self ) {
 		unsafe { let _ = ShowWindow( self.hwnd, SW_HIDE ); }
 		self.release_snapshot();

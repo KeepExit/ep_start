@@ -5,7 +5,7 @@
 
 use crate::state::{ PointerDrag, PointerUpAction, SettingsState };
 use crate::host::{ dpi_for_window, request_repaint };
-use crate::ui::components::choice_control_contains;
+use crate::ui::components::{ InteractionId, choice_control_contains, setting_button_contains, switch_control_contains };
 use crate::ui::settings::{ ActionId, ControlKind, SettingId };
 
 
@@ -19,6 +19,16 @@ impl SettingsState {
 		let layout = self.layout();
 		let id = layout.hit_control( x, y )?;
 		layout.item( id ).filter( |item| item.control_kind == ControlKind::Choice && choice_control_contains( item.control, dpi_for_window( self.hwnd ), x, y ) ).map( |item| item.id )
+	}
+	pub( crate ) fn hit_test_switch( &self, x: i32, y: i32 ) -> Option< SettingId > {
+		let layout = self.layout();
+		let id = layout.hit_control( x, y )?;
+		layout.item( id ).filter( |item| item.control_kind == ControlKind::Switch && switch_control_contains( item.control, dpi_for_window( self.hwnd ), x, y ) ).map( |item| item.id )
+	}
+	pub( crate ) fn hit_test_button( &self, x: i32, y: i32 ) -> Option< SettingId > {
+		let layout = self.layout();
+		let id = layout.hit_control( x, y )?;
+		layout.item( id ).filter( |item| item.control_kind == ControlKind::Button && setting_button_contains( item.control, dpi_for_window( self.hwnd ), x, y ) ).map( |item| item.id )
 	}
 	pub( crate ) fn scroll_to( &mut self, position: i32 ) {
 		let maximum = self.layout().content.scroll_max;
@@ -36,13 +46,22 @@ impl SettingsState {
 			self.update_slider( field, x );
 			return true;
 		}
+		if let Some( target ) = self.interactive_target_at( x, y ) {
+			self.interactions.set_hovered( Some( target ) );
+			self.interactions.set_pressed( Some( target ) );
+			request_repaint( self.hwnd );
+			return true;
+		}
 		false
 	}
 	pub( crate ) fn on_pointer_move( &mut self, x: i32, y: i32 ) {
 		match self.pointer_drag {
 			Some( PointerDrag::Slider( field ) ) => self.update_slider( field, x ),
 			Some( PointerDrag::Scrollbar( offset ) ) => self.update_scroll_drag( y, offset ),
-			None => {}
+			None => {
+				let hovered = self.interactive_target_at( x, y );
+				if self.interactions.hovered() != hovered { self.interactions.set_hovered( hovered ); request_repaint( self.hwnd ); }
+			}
 		}
 	}
 	pub( crate ) fn on_pointer_up( &mut self, x: i32, y: i32 ) -> PointerUpAction {
@@ -50,13 +69,13 @@ impl SettingsState {
 			request_repaint( self.hwnd );
 			return PointerUpAction::ReleaseCapture;
 		}
-		let layout = self.layout();
-		if let Some( action ) = layout.hit_action( x, y ) {
-			match action {
-				ActionId::Undo => self.undo(),
-				ActionId::Save => self.save(),
-			}
-			return PointerUpAction::None;
+		if let Some( pressed ) = self.interactions.pressed() {
+			let activate = self.interactive_target_at( x, y ) == Some( pressed );
+			self.interactions.set_pressed( None );
+			if activate { self.activate_interaction( pressed ); }
+			if matches!( pressed, InteractionId::Action( _ ) ) && !self.is_dirty() { self.interactions.set_hovered( None ); }
+			request_repaint( self.hwnd );
+			return PointerUpAction::ReleaseCapture;
 		}
 		if let Some( field ) = self.hit_test_choice( x, y ) {
 			return PointerUpAction::Choice( field );
@@ -64,9 +83,13 @@ impl SettingsState {
 		PointerUpAction::None
 	}
 	pub( crate ) fn on_capture_changed( &mut self ) {
-		if self.pointer_drag.take().is_some() {
-			request_repaint( self.hwnd );
-		}
+		self.interactions.set_pressed( None );
+		let _ = self.pointer_drag.take();
+		request_repaint( self.hwnd );
+	}
+	pub( crate ) fn on_pointer_leave( &mut self ) {
+		self.interactions.set_hovered( None );
+		request_repaint( self.hwnd );
 	}
 	pub( crate ) fn on_size( &mut self ) {
 		let maximum = self.layout().content.scroll_max;
@@ -96,5 +119,23 @@ impl SettingsState {
 	pub( crate ) fn update_scroll_drag( &mut self, y: i32, offset: i32 ) {
 		let layout = self.layout();
 		self.scroll_to( layout.scroll_from_thumb( y - offset ) );
+	}
+	fn interactive_target_at( &self, x: i32, y: i32 ) -> Option< InteractionId > {
+		let layout = self.layout();
+		if self.is_dirty() {
+			if let Some( action ) = layout.hit_action( x, y ) { return Some( InteractionId::Action( action ) ); }
+		}
+		if let Some( field ) = self.hit_test_switch( x, y ) { return Some( InteractionId::Setting( field ) ); }
+		if let Some( field ) = self.hit_test_button( x, y ) { return Some( InteractionId::Setting( field ) ); }
+		None
+	}
+	fn activate_interaction( &mut self, target: InteractionId ) {
+		match target {
+			InteractionId::Action( ActionId::Undo ) => self.undo(),
+			InteractionId::Action( ActionId::Save ) => self.save(),
+			InteractionId::Setting( SettingId::StartButtonClick ) => self.toggle_switch( SettingId::StartButtonClick ),
+			InteractionId::Setting( SettingId::RestartShell ) => self.restart_shell(),
+			_ => {}
+		}
 	}
 }

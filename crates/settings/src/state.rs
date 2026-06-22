@@ -1,4 +1,4 @@
-use crate::ui::components::{ choose_choice_value, slider_ratio_from_x };
+use crate::ui::components::{ InteractionAnimations, InteractionId, choose_choice_value, slider_ratio_from_x };
 use crate::paint::{SettingsPageView, paint_settings_page_buffered };
 use crate::ui::geometry::scale;
 use crate::ui::settings::{ SettingId, SettingsUi, SettingsUiLayout };
@@ -7,9 +7,10 @@ use crate::host::{client_rect, dpi_for_monitor, dpi_for_window, foreground_windo
 use crate::size::{WindowSize, WindowSizeStore };
 use configuration::{ AppPreferences, ConfigurationStore, StartPreferences, StartShortcut };
 use localization::TextResources;
-use platform::{ MonitorGeometry, show_error_dialog };
+use platform::{ MonitorGeometry, launch_shell_restart_helper, show_error_dialog };
 use windows::Win32::Foundation::{ HWND, RECT };
 use windows::Win32::Graphics::Gdi::HDC;
+use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 
 pub( crate ) struct SettingsState {
@@ -20,6 +21,7 @@ pub( crate ) struct SettingsState {
 	pub( crate ) text: TextResources,
 	pub( crate ) theme: SettingsTheme,
 	pub( crate ) ui: SettingsUi,
+	pub( crate ) interactions: InteractionAnimations,
 	pub( crate ) pointer_drag: Option< PointerDrag >,
 	pub( crate ) scroll_y: i32,
 	pub( crate ) on_change: Box< dyn FnMut( StartPreferences ) >,
@@ -40,6 +42,7 @@ pub( crate ) enum PointerDrag {
 
 impl SettingsState {
 	pub( crate ) fn new( store: ConfigurationStore, preferences: AppPreferences, text: TextResources, on_change: impl FnMut( StartPreferences ) + 'static ) -> Self {
+		let interactions = InteractionAnimations::new( preferences.start.open_on_start_button_click );
 		Self {
 			hwnd: HWND::default(),
 			store,
@@ -48,6 +51,7 @@ impl SettingsState {
 			text,
 			theme: SettingsTheme::system(),
 			ui: SettingsUi::settings_page(),
+			interactions,
 			pointer_drag: None,
 			scroll_y: 0,
 			on_change: Box::new( on_change ),
@@ -65,6 +69,7 @@ impl SettingsState {
 		let x = geometry.work_rect.left + ( geometry.work_width() - width ) / 2;
 		let y = geometry.work_rect.top + ( geometry.work_height() - height ) / 2;
 		self.refresh_theme();
+		self.interactions.clear_pointer();
 		self.scroll_y = 0;
 		set_window_bounds( self.hwnd, x, y, width, height );
 		show_window( self.hwnd );
@@ -90,6 +95,7 @@ impl SettingsState {
 	pub( crate ) fn undo( &mut self ) {
 		if !self.is_dirty() { return; }
 		self.draft_preferences = self.saved_preferences;
+		self.interactions.set_toggle( InteractionId::Setting( SettingId::StartButtonClick ), self.draft_preferences.start.open_on_start_button_click );
 		request_repaint( self.hwnd );
 	}
 	pub( crate ) fn save( &mut self ) {
@@ -103,6 +109,7 @@ impl SettingsState {
 			Ok( preferences ) => {
 				self.saved_preferences = preferences;
 				self.draft_preferences = preferences;
+				self.interactions.set_toggle( InteractionId::Setting( SettingId::StartButtonClick ), preferences.start.open_on_start_button_click );
 				( self.on_change )( preferences.start );
 			}
 			Err( error ) => {
@@ -133,6 +140,28 @@ impl SettingsState {
 		self.draft_preferences.start.normalize();
 		request_repaint( self.hwnd );
 	}
+	pub( crate ) fn toggle_switch( &mut self, field: SettingId ) {
+		match field {
+			SettingId::StartButtonClick => self.draft_preferences.start.open_on_start_button_click = !self.draft_preferences.start.open_on_start_button_click,
+			_ => return,
+		}
+		self.interactions.set_toggle( InteractionId::Setting( field ), self.draft_preferences.start.open_on_start_button_click );
+		request_repaint( self.hwnd );
+	}
+	pub( crate ) fn advance_interactions( &mut self ) {
+		self.interactions.advance();
+		request_repaint( self.hwnd );
+	}
+	pub( crate ) fn interactions_animating( &self ) -> bool {
+		self.interactions.is_animating()
+	}
+	pub( crate ) fn restart_shell( &mut self ) {
+		if let Err( error ) = launch_shell_restart_helper() {
+			show_error_dialog( "重启失败", &error );
+			return;
+		}
+		unsafe { PostQuitMessage( 0 ); }
+	}
 	pub( crate ) fn layout( &self ) -> SettingsUiLayout {
 		let client = client_rect( self.hwnd );
 		let dpi = dpi_for_window( self.hwnd );
@@ -152,6 +181,7 @@ impl SettingsState {
 			preferences: &self.draft_preferences,
 			dirty: self.is_dirty(),
 			active_slider: self.active_slider(),
+			interactions: &self.interactions,
 			scroll_y: self.scroll_y,
 		} );
 	}

@@ -4,8 +4,11 @@
 
 
 use super::choice::draw_choice_control;
+use super::button::draw_setting_button;
 use super::slider::draw_slider_control;
+use super::switch::draw_switch_control;
 
+use super::interaction::InteractionVisual;
 use crate::ui::painter::Painter;
 use crate::ui::settings::{ ControlKind, SettingId, SettingItemLayout };
 use crate::ui::theme::SettingsTheme;
@@ -22,7 +25,7 @@ pub( crate ) struct SettingView< 'a > {
 	pub ratio: f32,
 }
 
-pub( crate ) fn draw_setting_row( painter: &Painter, theme: &SettingsTheme, row: &SettingItemLayout, view: SettingView< '_ >, active_slider: Option< SettingId > ) {
+pub( crate ) fn draw_setting_row( painter: &Painter, theme: &SettingsTheme, row: &SettingItemLayout, view: SettingView< '_ >, active_slider: Option< SettingId >, interaction: InteractionVisual ) {
 	painter.round_rect( row.card, 7, theme.card );
 	painter.text( view.icon, row.icon, 30, FW_NORMAL.0 as i32, theme.text );
 	painter.text( &view.text.title, row.title, 16, FW_SEMIBOLD.0 as i32, theme.text );
@@ -30,5 +33,7 @@ pub( crate ) fn draw_setting_row( painter: &Painter, theme: &SettingsTheme, row:
 	match row.control_kind {
 		ControlKind::Slider => draw_slider_control( painter, theme, row.control, &view.value, view.minimum, view.maximum, view.ratio, active_slider.is_some_and( |field| field == row.id ) ),
 		ControlKind::Choice => draw_choice_control( painter, theme, row.control, &view.value ),
+		ControlKind::Switch => draw_switch_control( painter, theme, row.control, &view.value, interaction ),
+		ControlKind::Button => draw_setting_button( painter, theme, row.control, &view.value, interaction ),
 	}
 }

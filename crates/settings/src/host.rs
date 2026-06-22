@@ -13,12 +13,15 @@ use windows::Win32::Graphics::Dwm::{ DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindow
 use windows::Win32::Graphics::Gdi::{ BeginPaint, EndPaint, HMONITOR, InvalidateRect, PAINTSTRUCT };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{ GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI };
-use windows::Win32::UI::Input::KeyboardAndMouse::{ ReleaseCapture, SetCapture };
-use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, HICON, ICON_SMALL, IDC_ARROW, LoadCursorW, MINMAXINFO, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETICON, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW };
+use windows::Win32::UI::Input::KeyboardAndMouse::{ ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent };
+use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, HICON, ICON_SMALL, IDC_ARROW, KillTimer, LoadCursorW, MINMAXINFO, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETICON, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW };
 use windows::core::{ Result as WindowsResult, w };
 
 
 const WM_SHOW_SETTINGS: u32 = WM_APP + 50;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const INTERACTION_TIMER_ID: usize = 1;
+const INTERACTION_FRAME_MS: u32 = 16;
 
 pub( crate ) struct SettingsWindowHost {
 	hwnd: HWND,
@@ -121,6 +124,7 @@ unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam
 				return LRESULT( 0 );
 			}
 			WM_CLOSE => {
+				unsafe { let _ = KillTimer( Some( hwnd ), INTERACTION_TIMER_ID ); }
 				hide_window( hwnd );
 				trim_working_set();
 				return LRESULT( 0 );
@@ -130,11 +134,18 @@ unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam
 				if unsafe { ( *state ).on_pointer_down( x, y ) } {
 					capture_mouse( hwnd );
 				}
+				unsafe { sync_interaction_timer( hwnd, &*state ); }
 				return LRESULT( 0 );
 			}
 			WM_MOUSEMOVE => {
 				let ( x, y ) = point_from_lparam( lparam );
+				track_mouse_leave( hwnd );
 				unsafe { ( *state ).on_pointer_move( x, y ); }
+				unsafe { sync_interaction_timer( hwnd, &*state ); }
+				return LRESULT( 0 );
+			}
+			WM_MOUSELEAVE => {
+				unsafe { ( *state ).on_pointer_leave(); sync_interaction_timer( hwnd, &*state ); }
 				return LRESULT( 0 );
 			}
 			WM_LBUTTONUP => {
@@ -144,11 +155,19 @@ unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam
 					PointerUpAction::ReleaseCapture => release_mouse(),
 					PointerUpAction::Choice( field ) => unsafe { ( *state ).choose( field ); },
 				}
+				unsafe { sync_interaction_timer( hwnd, &*state ); }
 				return LRESULT( 0 );
 			}
 			WM_CAPTURECHANGED => {
 				unsafe { ( *state ).on_capture_changed(); }
+				unsafe { sync_interaction_timer( hwnd, &*state ); }
 				return LRESULT( 0 );
+			}
+			WM_TIMER => {
+				if wparam.0 == INTERACTION_TIMER_ID {
+					unsafe { ( *state ).advance_interactions(); sync_interaction_timer( hwnd, &*state ); }
+					return LRESULT( 0 );
+				}
 			}
 			WM_PAINT => {
 				unsafe { paint_window( hwnd, &*state ); }
@@ -195,4 +214,17 @@ unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam
 
 fn point_from_lparam( lparam: LPARAM ) -> ( i32, i32 ) {
 	( lparam.0 as i16 as i32, ( lparam.0 >> 16 ) as i16 as i32 )
+}
+
+
+fn track_mouse_leave( hwnd: HWND ) {
+	let mut tracking = TRACKMOUSEEVENT { cbSize: size_of::< TRACKMOUSEEVENT >() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, ..Default::default() };
+	unsafe { let _ = TrackMouseEvent( &mut tracking ); }
+}
+
+
+unsafe fn sync_interaction_timer( hwnd: HWND, state: &SettingsState ) {
+	unsafe {
+		if state.interactions_animating() { let _ = SetTimer( Some( hwnd ), INTERACTION_TIMER_ID, INTERACTION_FRAME_MS, None ); } else { let _ = KillTimer( Some( hwnd ), INTERACTION_TIMER_ID ); }
+	}
 }

@@ -11,6 +11,7 @@ dependencies = [
  "localization",
  "platform",
  "settings",
+ "shell_dll",
  "start",
  "windows",
 ]

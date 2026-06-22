@@ -2,26 +2,116 @@
 	"bars": [
 		{
 			"title": "常用",
+			"column": 0,
+			"tiles": [
+				{
+					"title": "文件资源管理器",
+					"position": {
+						"column": 0,
+						"row": 1
+					},
+					"target": "explorer.exe",
+					"color": "#0078D4"
+				}
+			]
+		},
+		{
+			"title": "asasa啊啊啊",
+			"column": 0,
+			"tiles": []
+		},
+		{
+			"title": "新",
+			"column": 0,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 3",
+			"column": 2,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 6",
+			"column": 2,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 7",
+			"column": 2,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 8",
+			"column": 2,
+			"tiles": [
+				{
+					"title": "计算器",
+					"position": {
+						"column": 0,
+						"row": 0
+					},
+					"target": "calc.exe",
+					"color": "#107C10"
+				}
+			]
+		},
+		{
+			"title": "新磁贴栏 9",
+			"column": 2,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 10",
+			"column": 2,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏",
+			"column": 1,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 11",
+			"column": 1,
+			"tiles": [
+				{
+					"title": "Windows 设置",
+					"position": {
+						"column": 3,
+						"row": 0
+					},
+					"target": "ms-settings:",
+					"color": "#744DA9"
+				}
+			]
+		},
+		{
+			"title": "新磁贴栏 12",
+			"column": 1,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 13",
+			"column": 1,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 5",
+			"column": 3,
+			"tiles": []
+		},
+		{
+			"title": "新磁贴栏 2",
+			"column": 3,
 			"tiles": [
 				{
 					"title": "记事本",
+					"position": {
+						"column": 0,
+						"row": 0
+					},
 					"target": "notepad.exe",
 					"color": "#0067C0"
-				},
-				{
-					"title": "文件资源管理器",
-					"target": "explorer.exe",
-					"color": "#0078D4"
-				},
-				{
-					"title": "计算器",
-					"target": "calc.exe",
-					"color": "#107C10"
-				},
-				{
-					"title": "Windows 设置",
-					"target": "ms-settings:",
-					"color": "#744DA9"
 				}
 			]
 		}

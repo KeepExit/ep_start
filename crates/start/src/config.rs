@@ -21,13 +21,24 @@ pub struct StartConfig {
 #[derive( Clone, Debug, Deserialize, Serialize )]
 pub struct TileBar {
 	pub title: String,
+	#[serde( default, skip_serializing_if = "Option::is_none" )]
+	pub column: Option< u8 >,
 	pub tiles: Vec< Tile >,
+}
+
+
+#[derive( Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize )]
+pub struct TilePosition {
+	pub column: u8,
+	pub row: u16,
 }
 
 
 #[derive( Clone, Debug, Deserialize, Serialize )]
 pub struct Tile {
 	pub title: String,
+	#[serde( default, skip_serializing_if = "Option::is_none" )]
+	pub position: Option< TilePosition >,
 	#[serde( default, skip_serializing_if = "String::is_empty" )]
 	pub target: String,
 	#[serde( default, skip_serializing_if = "String::is_empty" )]
@@ -129,4 +140,19 @@ impl Tile {
 
 fn default_tile_color() -> String {
 	"#0067C0".to_string()
+}
+
+
+#[cfg( test )]
+mod tests {
+	use super::*;
+
+
+	#[test]
+	fn legacy_layout_without_grid_positions_remains_valid() {
+		let config: StartConfig = serde_json::from_str( r##"{"bars":[{"title":"Legacy","tiles":[{"title":"App","target":"app.exe","color":"#0067C0"}]}]}"## ).unwrap();
+		assert_eq!( config.bars[ 0 ].column, None );
+		assert_eq!( config.bars[ 0 ].tiles[ 0 ].position, None );
+		assert!( config.validate().is_ok() );
+	}
 }

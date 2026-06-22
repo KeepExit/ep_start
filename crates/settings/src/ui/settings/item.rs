@@ -12,14 +12,18 @@ pub( crate ) enum SettingId {
 	Blur,
 	AnimationDuration,
 	Shortcut,
+	StartButtonClick,
 	BarColumns,
 	TilesPerRow,
+	RestartShell,
 }
 
 #[derive( Clone, Copy, Debug, Eq, PartialEq )]
 pub( crate ) enum ControlKind {
 	Slider,
 	Choice,
+	Switch,
+	Button,
 }
 
 #[derive( Clone, Copy )]

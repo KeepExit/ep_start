@@ -20,6 +20,7 @@ const TRAY_ICON_LARGE: &[ u8 ] = include_bytes!( "../../../assets/Omelette x256.
 
 
 pub struct Application {
+	_shell_injection: crate_injector::ShellInjection,
 	_tray: TrayIcon,
 	_settings: SettingsRuntime,
 	_start: StartRuntime,
@@ -34,6 +35,7 @@ impl Application {
 		let configuration = ConfigurationStore::discover()?;
 		let preferences = configuration.load()?;
 		let start = StartRuntime::new( &platform, preferences.start )?;
+		let shell_injection = injector_bridge::install()?;
 		let start_controller = start.controller();
 		let settings = SettingsRuntime::new( configuration, preferences, TRAY_ICON_SMALL, TRAY_ICON_LARGE, move |preferences| start_controller.update_preferences( preferences ) )?;
 		let settings_controller = settings.controller();
@@ -44,7 +46,7 @@ impl Application {
 			TrayEvent::Command( TRAY_COMMAND_EXIT ) => unsafe { PostQuitMessage( 0 ) },
 			TrayEvent::Command( _ ) => {}
 		} )?;
-		Ok( Self { _tray: tray, _settings: settings, _start: start, platform } )
+		Ok( Self { _shell_injection: shell_injection, _tray: tray, _settings: settings, _start: start, platform } )
 	}
 
 
@@ -55,6 +57,7 @@ impl Application {
 
 
 pub fn run() -> Result< (), String > {
+	if platform::run_shell_restart_helper_if_requested()? { return Ok( () ); }
 	if !platform::ensure_elevated()? { return Ok( () ); }
 	Application::new()?.run()
 }

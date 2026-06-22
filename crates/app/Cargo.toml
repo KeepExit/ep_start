@@ -18,6 +18,7 @@ path = "src/lib.rs"
 
 [ dependencies ]
 crate-injector.workspace = true
+shell-dll.workspace = true
 
 configuration.workspace = true
 localization.workspace = true

@@ -120,7 +120,8 @@ impl SettingsUi {
 			sidebar.bottom( |_| {} );
 		} ).content( |content| {
 			content.section( SettingSection::new( SectionId::Behavior )
-				.item( SettingItem::new( SettingId::Shortcut, ControlKind::Choice ) ) );
+				.item( SettingItem::new( SettingId::Shortcut, ControlKind::Choice ) )
+				.item( SettingItem::new( SettingId::StartButtonClick, ControlKind::Switch ) ) );
 			content.section( SettingSection::new( SectionId::MenuBackground )
 				.item( SettingItem::new( SettingId::Overlay, ControlKind::Slider ) )
 				.item( SettingItem::new( SettingId::Blur, ControlKind::Slider ) )
@@ -128,6 +129,8 @@ impl SettingsUi {
 			content.section( SettingSection::new( SectionId::Tiles )
 				.item( SettingItem::new( SettingId::BarColumns, ControlKind::Choice ) )
 				.item( SettingItem::new( SettingId::TilesPerRow, ControlKind::Choice ) ) );
+			content.section( SettingSection::new( SectionId::Debug )
+				.item( SettingItem::new( SettingId::RestartShell, ControlKind::Button ) ) );
 		} ).footer( |footer| {
 			footer.action( ActionDefinition::new( ActionId::Undo, false ) );
 			footer.action( ActionDefinition::new( ActionId::Save, true ) );

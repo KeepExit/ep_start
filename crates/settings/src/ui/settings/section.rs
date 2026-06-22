@@ -12,6 +12,7 @@ pub( crate ) enum SectionId {
 	Behavior,
 	MenuBackground,
 	Tiles,
+	Debug,
 }
 
 pub( crate ) struct SettingSection {
