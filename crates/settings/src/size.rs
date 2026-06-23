@@ -21,13 +21,10 @@ pub struct WindowSize {
 
 
 pub struct WindowSizeStore;
-
-
 impl WindowSizeStore {
 	pub fn load() -> WindowSize {
 		WindowSize { width: read_value( w!( "SettingsWidth" ) ).unwrap_or( DEFAULT_WIDTH as u32 ) as i32, height: read_value( w!( "SettingsHeight" ) ).unwrap_or( DEFAULT_HEIGHT as u32 ) as i32 }
 	}
-
 
 	pub fn save( size: WindowSize ) {
 		let mut key = HKEY::default();

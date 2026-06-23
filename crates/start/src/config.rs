@@ -9,6 +9,10 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{ Path, PathBuf };
+use std::sync::atomic::{ AtomicU64, Ordering };
+
+
+static NEXT_TILE_RUNTIME_ID: AtomicU64 = AtomicU64::new( 1 );
 
 
 #[derive( Clone, Debug, Deserialize, Serialize )]
@@ -23,22 +27,53 @@ pub struct TileBar {
 	pub title: String,
 	#[serde( default, skip_serializing_if = "Option::is_none" )]
 	pub column: Option< u8 >,
+	#[serde( default, skip_serializing_if = "is_false" )]
+	pub locked: bool,
 	pub tiles: Vec< Tile >,
 }
 
 
-#[derive( Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize )]
+#[derive( Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize )]
 pub struct TilePosition {
 	pub column: u8,
 	pub row: u16,
 }
 
 
+#[derive( Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize )]
+#[serde( rename_all = "kebab-case" )]
+pub enum TileSize {
+	Small,
+	#[default]
+	Normal,
+	Medium,
+	Large,
+}
+
+
+impl TileSize {
+	pub const fn grid_width( self ) -> usize {
+		match self { Self::Small => 1, Self::Normal => 2, Self::Medium | Self::Large => 4 }
+	}
+
+
+	pub const fn grid_height( self ) -> usize {
+		match self { Self::Small => 1, Self::Normal | Self::Medium => 2, Self::Large => 4 }
+	}
+}
+
+
 #[derive( Clone, Debug, Deserialize, Serialize )]
 pub struct Tile {
+	#[serde( skip, default = "next_tile_runtime_id" )]
+	pub( crate ) runtime_id: u64,
 	pub title: String,
 	#[serde( default, skip_serializing_if = "Option::is_none" )]
 	pub position: Option< TilePosition >,
+	#[serde( default, skip_serializing_if = "Option::is_none" )]
+	pub grid_position: Option< TilePosition >,
+	#[serde( default, skip_serializing_if = "is_normal_size" )]
+	pub size: TileSize,
 	#[serde( default, skip_serializing_if = "String::is_empty" )]
 	pub target: String,
 	#[serde( default, skip_serializing_if = "String::is_empty" )]
@@ -47,6 +82,8 @@ pub struct Tile {
 	pub working_directory: String,
 	#[serde( default = "default_tile_color" )]
 	pub color: String,
+	#[serde( default, skip_serializing_if = "String::is_empty" )]
+	pub icon_source: String,
 	#[serde( default, skip_serializing_if = "Vec::is_empty" )]
 	pub tiles: Vec< Tile >,
 }
@@ -107,7 +144,6 @@ impl StartConfig {
 	fn validate( &self ) -> Result< (), String > {
 		if self.bars.is_empty() { return Err( "配置文件至少需要一个磁贴栏".to_string() ); }
 		for bar in &self.bars {
-			if bar.title.trim().is_empty() { return Err( "磁贴栏标题不能为空".to_string() ); }
 			for tile in &bar.tiles { tile.validate( &bar.title )?; }
 		}
 		Ok( () )
@@ -116,6 +152,11 @@ impl StartConfig {
 
 
 impl Tile {
+	pub( crate ) fn runtime_id( &self ) -> u64 {
+		self.runtime_id
+	}
+
+
 	pub fn working_directory( &self ) -> Option< &Path > {
 		if self.working_directory.is_empty() { None } else { Some( Path::new( &self.working_directory ) ) }
 	}
@@ -139,7 +180,22 @@ impl Tile {
 
 
 fn default_tile_color() -> String {
-	"#0067C0".to_string()
+	"#606060".to_string()
+}
+
+
+pub( crate ) fn next_tile_runtime_id() -> u64 {
+	NEXT_TILE_RUNTIME_ID.fetch_add( 1, Ordering::Relaxed )
+}
+
+
+fn is_false( value: &bool ) -> bool {
+	!*value
+}
+
+
+fn is_normal_size( value: &TileSize ) -> bool {
+	*value == TileSize::Normal
 }
 
 
@@ -150,9 +206,11 @@ mod tests {
 
 	#[test]
 	fn legacy_layout_without_grid_positions_remains_valid() {
-		let config: StartConfig = serde_json::from_str( r##"{"bars":[{"title":"Legacy","tiles":[{"title":"App","target":"app.exe","color":"#0067C0"}]}]}"## ).unwrap();
+		let config: StartConfig = serde_json::from_str( r##"{"bars":[{"title":"Legacy","tiles":[{"title":"App","target":"app.exe","color":"#0067C0"},{"title":"App 2","target":"app2.exe","color":"#0067C0"}]}]}"## ).unwrap();
 		assert_eq!( config.bars[ 0 ].column, None );
 		assert_eq!( config.bars[ 0 ].tiles[ 0 ].position, None );
+		assert_ne!( config.bars[ 0 ].tiles[ 0 ].runtime_id(), 0 );
+		assert_ne!( config.bars[ 0 ].tiles[ 0 ].runtime_id(), config.bars[ 0 ].tiles[ 1 ].runtime_id() );
 		assert!( config.validate().is_ok() );
 	}
 }

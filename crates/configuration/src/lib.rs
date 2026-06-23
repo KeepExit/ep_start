@@ -29,6 +29,16 @@ pub struct StartPreferences {
 	pub shortcut: StartShortcut,
 	#[serde( default = "default_open_on_start_button_click" )]
 	pub open_on_start_button_click: bool,
+	#[serde( default = "default_rounded_tiles" )]
+	pub rounded_tiles: bool,
+	#[serde( default = "default_rounded_tile_bars" )]
+	pub rounded_tile_bars: bool,
+	#[serde( default = "default_tile_animation_duration_ms" )]
+	pub tile_animation_duration_ms: u32,
+	#[serde( default = "default_tile_background_opacity_percent" )]
+	pub tile_background_opacity_percent: u8,
+	#[serde( default = "default_tile_bar_background_opacity_percent" )]
+	pub tile_bar_background_opacity_percent: u8,
 	#[serde( default = "default_bar_columns", alias = "tile_group_columns" )]
 	pub tile_bar_columns: u8,
 	#[serde( default = "default_tiles_per_row" )]
@@ -89,6 +99,9 @@ impl StartPreferences {
 		self.overlay_opacity_percent = self.overlay_opacity_percent.min( 100 );
 		self.blur_percent = self.blur_percent.min( 100 );
 		self.opening_duration_ms = self.opening_duration_ms.min( 5000 ) / 50 * 50;
+		self.tile_animation_duration_ms = self.tile_animation_duration_ms.min( 1000 ) / 10 * 10;
+		self.tile_background_opacity_percent = self.tile_background_opacity_percent.min( 100 );
+		self.tile_bar_background_opacity_percent = self.tile_bar_background_opacity_percent.min( 100 );
 		self.tile_bar_columns = self.tile_bar_columns.clamp( 1, 6 );
 		self.tiles_per_row = self.tiles_per_row.clamp( 3, 5 );
 	}
@@ -102,6 +115,31 @@ const fn default_bar_columns() -> u8 {
 
 const fn default_open_on_start_button_click() -> bool {
 	true
+}
+
+
+const fn default_rounded_tiles() -> bool {
+	true
+}
+
+
+const fn default_rounded_tile_bars() -> bool {
+	true
+}
+
+
+const fn default_tile_animation_duration_ms() -> u32 {
+	220
+}
+
+
+const fn default_tile_background_opacity_percent() -> u8 {
+	64
+}
+
+
+const fn default_tile_bar_background_opacity_percent() -> u8 {
+	64
 }
 
 
@@ -130,6 +168,11 @@ mod tests {
 		let preferences: AppPreferences = serde_json::from_str( r#"{"start":{"overlay_opacity_percent":50,"blur_percent":0,"opening_duration_ms":250,"tile_bar_columns":3,"tiles_per_row":4}}"# ).unwrap();
 		assert_eq!( preferences.start.shortcut, StartShortcut::WinShift );
 		assert!( preferences.start.open_on_start_button_click );
+		assert!( preferences.start.rounded_tiles );
+		assert!( preferences.start.rounded_tile_bars );
+		assert_eq!( preferences.start.tile_animation_duration_ms, 220 );
+		assert_eq!( preferences.start.tile_background_opacity_percent, 64 );
+		assert_eq!( preferences.start.tile_bar_background_opacity_percent, 64 );
 	}
 
 

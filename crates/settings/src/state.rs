@@ -42,7 +42,7 @@ pub( crate ) enum PointerDrag {
 
 impl SettingsState {
 	pub( crate ) fn new( store: ConfigurationStore, preferences: AppPreferences, text: TextResources, on_change: impl FnMut( StartPreferences ) + 'static ) -> Self {
-		let interactions = InteractionAnimations::new( preferences.start.open_on_start_button_click );
+		let interactions = InteractionAnimations::new( &[ ( SettingId::StartButtonClick, preferences.start.open_on_start_button_click ), ( SettingId::RoundedTiles, preferences.start.rounded_tiles ), ( SettingId::RoundedTileBars, preferences.start.rounded_tile_bars ) ] );
 		Self {
 			hwnd: HWND::default(),
 			store,
@@ -88,6 +88,9 @@ impl SettingsState {
 			SettingId::Overlay => self.draft_preferences.start.overlay_opacity_percent = ( ratio * 100.0 ).round() as u8,
 			SettingId::Blur => self.draft_preferences.start.blur_percent = ( ratio * 100.0 ).round() as u8,
 			SettingId::AnimationDuration => self.draft_preferences.start.opening_duration_ms = ( ( ratio * 100.0 ).round() as u32 * 50 ).min( 5000 ),
+			SettingId::TileAnimationDuration => self.draft_preferences.start.tile_animation_duration_ms = ( ( ratio * 100.0 ).round() as u32 * 10 ).min( 1000 ),
+			SettingId::TileBackgroundOpacity => self.draft_preferences.start.tile_background_opacity_percent = ( ratio * 100.0 ).round() as u8,
+			SettingId::TileBarBackgroundOpacity => self.draft_preferences.start.tile_bar_background_opacity_percent = ( ratio * 100.0 ).round() as u8,
 			_ => return,
 		}
 		request_repaint( self.hwnd );
@@ -96,6 +99,8 @@ impl SettingsState {
 		if !self.is_dirty() { return; }
 		self.draft_preferences = self.saved_preferences;
 		self.interactions.set_toggle( InteractionId::Setting( SettingId::StartButtonClick ), self.draft_preferences.start.open_on_start_button_click );
+		self.interactions.set_toggle( InteractionId::Setting( SettingId::RoundedTiles ), self.draft_preferences.start.rounded_tiles );
+		self.interactions.set_toggle( InteractionId::Setting( SettingId::RoundedTileBars ), self.draft_preferences.start.rounded_tile_bars );
 		request_repaint( self.hwnd );
 	}
 	pub( crate ) fn save( &mut self ) {
@@ -110,6 +115,8 @@ impl SettingsState {
 				self.saved_preferences = preferences;
 				self.draft_preferences = preferences;
 				self.interactions.set_toggle( InteractionId::Setting( SettingId::StartButtonClick ), preferences.start.open_on_start_button_click );
+				self.interactions.set_toggle( InteractionId::Setting( SettingId::RoundedTiles ), preferences.start.rounded_tiles );
+				self.interactions.set_toggle( InteractionId::Setting( SettingId::RoundedTileBars ), preferences.start.rounded_tile_bars );
 				( self.on_change )( preferences.start );
 			}
 			Err( error ) => {
@@ -143,9 +150,12 @@ impl SettingsState {
 	pub( crate ) fn toggle_switch( &mut self, field: SettingId ) {
 		match field {
 			SettingId::StartButtonClick => self.draft_preferences.start.open_on_start_button_click = !self.draft_preferences.start.open_on_start_button_click,
+			SettingId::RoundedTiles => self.draft_preferences.start.rounded_tiles = !self.draft_preferences.start.rounded_tiles,
+			SettingId::RoundedTileBars => self.draft_preferences.start.rounded_tile_bars = !self.draft_preferences.start.rounded_tile_bars,
 			_ => return,
 		}
-		self.interactions.set_toggle( InteractionId::Setting( field ), self.draft_preferences.start.open_on_start_button_click );
+		let enabled = match field { SettingId::StartButtonClick => self.draft_preferences.start.open_on_start_button_click, SettingId::RoundedTiles => self.draft_preferences.start.rounded_tiles, SettingId::RoundedTileBars => self.draft_preferences.start.rounded_tile_bars, _ => false };
+		self.interactions.set_toggle( InteractionId::Setting( field ), enabled );
 		request_repaint( self.hwnd );
 	}
 	pub( crate ) fn advance_interactions( &mut self ) {

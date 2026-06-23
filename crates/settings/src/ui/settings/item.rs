@@ -15,6 +15,11 @@ pub( crate ) enum SettingId {
 	StartButtonClick,
 	BarColumns,
 	TilesPerRow,
+	RoundedTiles,
+	RoundedTileBars,
+	TileAnimationDuration,
+	TileBackgroundOpacity,
+	TileBarBackgroundOpacity,
 	RestartShell,
 }
 

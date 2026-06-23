@@ -38,9 +38,12 @@ struct InteractionEntry {
 
 
 impl InteractionAnimations {
-	pub( crate ) fn new( switch_enabled: bool ) -> Self {
-		let toggle = switch_enabled as u8 as f32;
-		Self { entries: vec![ InteractionEntry { id: InteractionId::Setting( SettingId::StartButtonClick ), visual: InteractionVisual { toggle, ..Default::default() }, toggle_target: toggle } ], hovered: None, pressed: None, last_tick: Instant::now() }
+	pub( crate ) fn new( toggles: &[ ( SettingId, bool ) ] ) -> Self {
+		let entries = toggles.iter().map( |( setting, enabled )| {
+			let value = *enabled as u8 as f32;
+			InteractionEntry { id: InteractionId::Setting( *setting ), visual: InteractionVisual { toggle: value, ..Default::default() }, toggle_target: value }
+		} ).collect();
+		Self { entries, hovered: None, pressed: None, last_tick: Instant::now() }
 	}
 
 

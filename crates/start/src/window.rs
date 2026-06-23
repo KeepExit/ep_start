@@ -5,25 +5,29 @@
 
 use crate::animation::{ AnimationController, VisibilityState };
 use crate::backdrop::DesktopBackdrop;
-use crate::config::{ ConfigStore, StartConfig, TileBar, TilePosition };
+use crate::config::{ ConfigStore, StartConfig, Tile, TileBar, TilePosition, TileSize };
+use crate::context_menu::{ ContextMenu, ContextMenuInteraction, ContextMenuItem, ContextMenuNode };
 use crate::launcher::ProgramLauncher;
-use crate::layout::{ DragSource, DragVisual, DropTarget, FolderTileAddress, TileAddress, TileLayout, resolved_tile_slots };
+use crate::layout::{ DragSource, DragVisual, DropTarget, FolderTileAddress, TileAddress, TileDropVisual, TileLayout, interpolate_rect, reflow_ease, resolved_tile_positions };
 use crate::overlay::OverlaySurface;
 use crate::renderer::Renderer;
+use crate::tile_customization::choose_program;
 use crate::transition::DesktopTransition;
 use configuration::{ StartPreferences, StartShortcut };
 use platform::{ ForegroundActivation, ForegroundChangeObserver, GlobalAltTabEvent, GlobalInputAction, GlobalInputBinding, GlobalInputManager, GlobalStartShortcut, MonitorGeometry, show_error_dialog, trim_working_set };
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::collections::{ BTreeSet, HashMap };
 use std::sync::atomic::{ AtomicU32, Ordering };
+use std::sync::Arc;
 use std::time::{ Duration, Instant };
-use windows::Win32::Foundation::{ HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM };
-use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
-use windows::Win32::Graphics::Gdi::{ BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow };
+use windows::Win32::Foundation::{ HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM };
+use windows::Win32::Graphics::Direct2D::Common::{ D2D_RECT_F, D2D_SIZE_U };
+use windows::Win32::Graphics::Gdi::{ BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow, ScreenToClient };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent };
-use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CS_DBLCLKS, ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GWLP_USERDATA, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MSG, MSGFLT_ALLOW, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, RemovePropW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetPropW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_INPUT, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP };
+use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CS_DBLCLKS, ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GWLP_USERDATA, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MSG, MSGFLT_ALLOW, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, RemovePropW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetPropW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_INPUT, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP };
 use windows::core::{ PCWSTR, Result as WindowsResult, w };
 
 
@@ -44,11 +48,17 @@ const SHELL_START_ACTION_TASKBAR_ACTIVATION: usize = 2;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const TASKBAR_REFOCUS_TIMER_ID: usize = 2;
 const WORKING_SET_TRIM_TIMER_ID: usize = 3;
+const BAR_RENAME_CARET_TIMER_ID: usize = 4;
 const TASKBAR_REFOCUS_DELAY_MS: u32 = 100;
 const TASKBAR_ACTIVATION_WINDOW_MS: u64 = 1000;
 const ALT_TAB_COMMIT_WINDOW_MS: u64 = 1500;
 const WORKING_SET_TRIM_DELAY_MS: u32 = 1000;
-
+const BAR_RENAME_CARET_INTERVAL_MS: u32 = 530;
+const TILE_MENU_SMALL: u32 = 101;
+const TILE_MENU_NORMAL: u32 = 102;
+const TILE_MENU_MEDIUM: u32 = 103;
+const TILE_MENU_LARGE: u32 = 104;
+const TILE_MENU_TOGGLE_LOCK: u32 = 201;
 static SHELL_START_MESSAGE: AtomicU32 = AtomicU32::new( 0 );
 static SHELL_START_BUTTON_STATE_MESSAGE: AtomicU32 = AtomicU32::new( 0 );
 
@@ -92,8 +102,12 @@ struct WindowState {
 	open_folder: Option< TileAddress >,
 	pressed_folder_tile: Option< FolderTileAddress >,
 	renaming_bar: Option< BarRename >,
+	pointer_position: Option< ( f32, f32 ) >,
+	context_menu: Option< TileBarContextMenu >,
+	tile_creation: Option< TileCreation >,
 	mouse_tracking: bool,
 	drag: Option< PointerDrag >,
+	drop_animation: Option< TileDropAnimation >,
 }
 
 
@@ -114,25 +128,54 @@ struct PointerDrag {
 	active: bool,
 	target: DropTarget,
 	preview_source: DragSource,
-	origin_rect: windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F,
+	origin_rect: D2D_RECT_F,
 	original_config: StartConfig,
 	preview_config: Option< StartConfig >,
 	preview_layout: Option< TileLayout >,
+	preview_started: Instant,
+	reflow_origins: Arc< HashMap< u64, D2D_RECT_F > >,
 }
 
 
 struct BarRename {
 	bar_index: usize,
-	original_title: String,
+	caret_visible: bool,
+}
+
+
+struct TileCreation {
+	bar_index: usize,
+	position: TilePosition,
+	size: TileSize,
+	opened_at: Instant,
+}
+
+
+struct TileBarContextMenu {
+	menu: ContextMenu,
+	bar_index: usize,
+	position: TilePosition,
+}
+
+
+struct TileDropAnimation {
+	runtime_id: u64,
+	from_rect: D2D_RECT_F,
+	to_rect: D2D_RECT_F,
+	started_at: Instant,
+	duration_ms: u32,
 }
 
 
 impl WindowHost {
-	pub fn create( config_store: ConfigStore, config: StartConfig, preferences: StartPreferences, renderer: Renderer, input_manager: &GlobalInputManager ) -> Result< Self, String > {
+	pub fn create( config_store: ConfigStore, mut config: StartConfig, preferences: StartPreferences, renderer: Renderer, input_manager: &GlobalInputManager ) -> Result< Self, String > {
+		let bar_count = config.bars.len();
+		remove_empty_unlocked_bars( &mut config );
+		if config.bars.len() != bar_count { config_store.save( &config )?; }
 		let backdrop = DesktopBackdrop::create()?;
 		let overlay = OverlaySurface::create()?;
 		let transition = DesktopTransition::create()?;
-		let state = Box::new( WindowState { hwnd: HWND::default(), client_size: D2D_SIZE_U::default(), dpi: 96.0, config, config_store, preferences, layout: TileLayout::default(), renderer, backdrop, overlay, transition, animation: AnimationController::new( preferences.opening_duration_ms ), animation_frame_pending: false, render_frame_pending: false, last_win_shift_toggle: None, last_shell_button_toggle: None, last_taskbar_activation: None, alt_tab_state: AltTabState::Idle, foreground_handoff_close: false, input: None, activation: None, foreground_observer: None, hovered_tile: None, hovered_folder_tile: None, open_folder: None, pressed_folder_tile: None, renaming_bar: None, mouse_tracking: false, drag: None } );
+		let state = Box::new( WindowState { hwnd: HWND::default(), client_size: D2D_SIZE_U::default(), dpi: 96.0, config, config_store, preferences, layout: TileLayout::default(), renderer, backdrop, overlay, transition, animation: AnimationController::new( preferences.opening_duration_ms ), animation_frame_pending: false, render_frame_pending: false, last_win_shift_toggle: None, last_shell_button_toggle: None, last_taskbar_activation: None, alt_tab_state: AltTabState::Idle, foreground_handoff_close: false, input: None, activation: None, foreground_observer: None, hovered_tile: None, hovered_folder_tile: None, open_folder: None, pressed_folder_tile: None, renaming_bar: None, pointer_position: None, context_menu: None, tile_creation: None, mouse_tracking: false, drag: None, drop_animation: None } );
 		let state_pointer = Box::into_raw( state );
 		if let Err( error ) = unsafe { Self::create_native_window( state_pointer ) } {
 			unsafe { drop( Box::from_raw( state_pointer ) ); }
@@ -255,20 +298,24 @@ impl WindowState {
 		let geometry = MonitorGeometry::from_cursor().or_else( |_| MonitorGeometry::from_window( self.hwnd ) );
 		let Ok( geometry ) = geometry else { return; };
 		sync_shell_start_button_state( true );
+		self.transition.discard();
 		let transition_ready = self.transition.capture( &geometry ).is_ok();
-		self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME );
-		if transition_ready { self.transition.show( &geometry ); }
 		unsafe { let _ = SetWindowPos( self.hwnd, None, geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE ); }
 		self.apply_geometry( &geometry );
 		let _ = self.renderer.prepare( self.hwnd, self.client_size, self.dpi );
-		self.overlay.show( &geometry, None );
 		self.animation.open();
-		self.animation.prime_open_frame( 1.0 / 60.0 );
-		self.apply_animation_frame();
+		self.transition.set_opacity( 255 );
+		self.overlay.set_opacity( 0 );
+		self.paint();
+		if transition_ready { self.transition.show( &geometry ); }
+		if should_show_backdrop( transition_ready, self.preferences.blur_percent ) { self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME, transition_ready.then( || self.transition.hwnd() ) ); }
+		self.overlay.show( &geometry, None );
 		unsafe {
-			let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE | SWP_SHOWWINDOW );
+			let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE );
 			let _ = ShowWindow( self.hwnd, SW_SHOW );
 		}
+		self.animation.prime_open_frame( 1.0 / 60.0 );
+		self.apply_animation_frame();
 		self.activation = Some( ForegroundActivation::activate( self.hwnd ) );
 		if let Some( observer ) = &mut self.foreground_observer { observer.set_enabled( true ); }
 		if let Some( input ) = &self.input { input.set_surface_visible( true ); }
@@ -286,6 +333,7 @@ impl WindowState {
 	fn begin_close_mode( &mut self, foreground_handoff: bool ) {
 		unsafe { let _ = KillTimer( Some( self.hwnd ), TASKBAR_REFOCUS_TIMER_ID ); }
 		self.commit_bar_rename();
+		self.context_menu = None;
 		self.foreground_handoff_close |= foreground_handoff;
 		sync_shell_start_button_state( false );
 		self.animation.close();
@@ -371,8 +419,12 @@ impl WindowState {
 		self.open_folder = None;
 		self.pressed_folder_tile = None;
 		self.renaming_bar = None;
+		self.pointer_position = None;
+		self.context_menu = None;
+		self.tile_creation = None;
 		self.mouse_tracking = false;
 		self.drag = None;
+		self.drop_animation = None;
 		if let Some( input ) = &self.input { input.set_surface_visible( false ); }
 		unsafe { let _ = SetTimer( Some( self.hwnd ), WORKING_SET_TRIM_TIMER_ID, WORKING_SET_TRIM_DELAY_MS, None ); }
 	}
@@ -429,7 +481,7 @@ impl WindowState {
 	fn restore_after_foreground_handoff( &mut self ) {
 		let geometry = MonitorGeometry::from_window( self.hwnd ).or_else( |_| MonitorGeometry::from_cursor() );
 		let Ok( geometry ) = geometry else { return; };
-		self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME );
+		self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME, None );
 		self.overlay.show( &geometry, None );
 		unsafe { let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE | SWP_SHOWWINDOW ); }
 		self.apply_geometry( &geometry );
@@ -476,6 +528,7 @@ impl WindowState {
 
 
 	fn apply_geometry( &mut self, geometry: &MonitorGeometry ) {
+		self.context_menu = None;
 		let width = geometry.work_width().max( 1 ) as u32;
 		let height = geometry.work_height().max( 1 ) as u32;
 		self.client_size = D2D_SIZE_U { width, height };
@@ -491,7 +544,7 @@ impl WindowState {
 		if !self.animation.is_surface_present() { return; }
 		let Ok( geometry ) = MonitorGeometry::from_window( self.hwnd ) else { return; };
 		self.transition.discard();
-		self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME );
+		self.backdrop.show( &geometry, self.preferences.blur_percent, self.hwnd, WM_START_BACKDROP_FRAME, None );
 		self.overlay.show( &geometry, None );
 		unsafe { let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE | SWP_SHOWWINDOW ); }
 		self.apply_geometry( &geometry );
@@ -507,6 +560,7 @@ impl WindowState {
 
 	fn resize( &mut self, width: u32, height: u32 ) {
 		if width == 0 || height == 0 { return; }
+		self.context_menu = None;
 		self.client_size = D2D_SIZE_U { width, height };
 		self.dpi = unsafe { GetDpiForWindow( self.hwnd ) }.max( 96 ) as f32;
 		self.layout.calculate( width as f32 * 96.0 / self.dpi, height as f32 * 96.0 / self.dpi, &self.config, &self.preferences, self.open_folder );
@@ -521,8 +575,12 @@ impl WindowState {
 			let display_layout = active_drag.and_then( |drag| drag.preview_layout.as_ref() ).unwrap_or( &self.layout );
 			let source_config = active_drag.map( |drag| &drag.original_config );
 			let source_layout = active_drag.map( |_| &self.layout );
-			let drag = active_drag.map( |drag| DragVisual { source: drag.source, preview_source: drag.preview_source, origin_rect: drag.origin_rect, delta_x: drag.current_x - drag.start_x, delta_y: drag.current_y - drag.start_y, target: drag.target } );
-			let _ = self.renderer.paint( self.hwnd, self.client_size, self.dpi, display_config, display_layout, self.hovered_tile, self.hovered_folder_tile, self.renaming_bar.as_ref().map( |rename| rename.bar_index ), drag, source_config, source_layout, &self.animation.frame() );
+			let drag = active_drag.map( |drag| DragVisual { source: drag.source, preview_source: drag.preview_source, origin_rect: drag.origin_rect, delta_x: drag.current_x - drag.start_x, delta_y: drag.current_y - drag.start_y, target: drag.target, reflow_progress: tile_reflow_progress( drag.preview_started, self.preferences.tile_animation_duration_ms ), reflow_origins: drag.reflow_origins.clone() } );
+			let creation_progress = self.tile_creation.as_ref().map( |creation| ( creation.opened_at.elapsed().as_secs_f32() / 0.18 ).clamp( 0.0, 1.0 ) );
+			let drop_visual = self.drop_animation.as_ref().map( |animation| TileDropVisual { runtime_id: animation.runtime_id, from_rect: animation.from_rect, to_rect: animation.to_rect, progress: tile_reflow_progress( animation.started_at, animation.duration_ms ) } );
+			let reveal_pointer = if active_drag.is_none() { self.pointer_position } else { None };
+			let context_menu = self.context_menu.as_ref().map( |context| context.menu.visual() );
+			let _ = self.renderer.paint( self.hwnd, self.client_size, self.dpi, display_config, display_layout, self.hovered_tile, self.hovered_folder_tile, self.renaming_bar.as_ref().map( |rename| ( rename.bar_index, rename.caret_visible ) ), reveal_pointer, self.preferences.rounded_tiles, self.preferences.rounded_tile_bars, self.preferences.tile_background_opacity_percent as f32 / 100.0, self.preferences.tile_bar_background_opacity_percent as f32 / 100.0, creation_progress, drag, drop_visual, source_config, source_layout, context_menu, &self.animation.frame() );
 		}
 	}
 
@@ -535,73 +593,121 @@ impl WindowState {
 		let scale = self.dpi / 96.0;
 		let logical_x = x / scale;
 		let logical_y = y / scale;
+		self.pointer_position = Some( ( logical_x, logical_y ) );
+		if let Some( context ) = &mut self.context_menu {
+			if context.menu.pointer_move( logical_x, logical_y ) { unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } }
+			if context.menu.is_animating() { self.request_render_frame(); }
+			return;
+		}
 		if self.drag.is_some() {
-			let source = self.drag.as_ref().unwrap().source;
-			let active = self.drag.as_ref().unwrap().active || ( ( logical_x - self.drag.as_ref().unwrap().start_x ).powi( 2 ) + ( logical_y - self.drag.as_ref().unwrap().start_y ).powi( 2 ) ).sqrt() >= 5.0;
-			let current_target = self.drag.as_ref().unwrap().target;
-			let target = match source { DragSource::Tile( _ ) => self.layout.tile_drop_target( logical_x, logical_y ), DragSource::Bar( _ ) => self.layout.bar_drop_target( logical_x, logical_y ) }.unwrap_or( current_target );
-			let changed = {
-				let drag = self.drag.as_mut().unwrap();
-				drag.current_x = logical_x;
-				drag.current_y = logical_y;
-				let changed = drag.target != target || drag.active != active;
-				drag.active = active;
-				drag.target = target;
-				changed
-			};
-			if active && changed { self.rebuild_drag_preview(); }
-			if active { self.request_render_frame(); }
+			self.update_drag_pointer( logical_x, logical_y );
+			if self.drag.as_ref().is_some_and( |drag| drag.active ) { self.request_render_frame(); }
 			return;
 		}
 		let hovered_folder = if self.animation.state() == VisibilityState::Visible { self.layout.hit_test_folder_tile( logical_x, logical_y ) } else { None };
 		let hovered = if self.animation.state() == VisibilityState::Visible && hovered_folder.is_none() && !self.layout.folder_contains( logical_x, logical_y ) { self.layout.hit_test( logical_x, logical_y ) } else { None };
-		if hovered_folder != self.hovered_folder_tile { self.hovered_folder_tile = hovered_folder; unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } }
-		if hovered != self.hovered_tile { self.hovered_tile = hovered; unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } }
+		if hovered_folder != self.hovered_folder_tile { self.hovered_folder_tile = hovered_folder; }
+		if hovered != self.hovered_tile { self.hovered_tile = hovered; }
+		if self.animation.state() == VisibilityState::Visible { self.request_render_frame(); }
+	}
+
+
+	fn update_drag_pointer( &mut self, logical_x: f32, logical_y: f32 ) {
+		let Some( drag ) = &self.drag else { return; };
+		let source = drag.source;
+		let active = drag.active || ( ( logical_x - drag.start_x ).powi( 2 ) + ( logical_y - drag.start_y ).powi( 2 ) ).sqrt() >= 5.0;
+		let current_target = drag.target;
+		let target = match source {
+			DragSource::Tile( address ) => {
+				let tile = &drag.original_config.bars[ address.bar_index ].tiles[ address.tile_index ];
+				self.layout.dragged_tile_drop_target( logical_x, logical_y, drag.start_x - drag.origin_rect.left, drag.start_y - drag.origin_rect.top, tile.size.grid_width() )
+			}
+			DragSource::Bar( _ ) => self.layout.bar_drop_target( logical_x, logical_y ),
+		}.unwrap_or( current_target );
+		let changed = {
+			let drag = self.drag.as_mut().unwrap();
+			drag.current_x = logical_x;
+			drag.current_y = logical_y;
+			let changed = drag.target != target || drag.active != active;
+			drag.active = active;
+			drag.target = target;
+			changed
+		};
+		if active && changed { self.rebuild_drag_preview(); }
+	}
+
+
+	fn sample_drag_pointer( &mut self ) {
+		if !self.drag.as_ref().is_some_and( |drag| drag.active ) { return; }
+		let mut point = POINT::default();
+		if unsafe { GetCursorPos( &mut point ) }.is_err() || !unsafe { ScreenToClient( self.hwnd, &mut point ) }.as_bool() { return; }
+		let scale = self.dpi / 96.0;
+		self.update_drag_pointer( point.x as f32 / scale, point.y as f32 / scale );
 	}
 
 
 	fn mouse_leave( &mut self ) {
 		self.mouse_tracking = false;
-		if self.hovered_tile.take().is_some() { unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } }
-		if self.hovered_folder_tile.take().is_some() { unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } }
+		let had_pointer = self.pointer_position.is_some();
+		self.pointer_position = None;
+		self.hovered_tile = None;
+		self.hovered_folder_tile = None;
+		if let Some( context ) = &mut self.context_menu { context.menu.pointer_leave(); }
+		if had_pointer && self.animation.state() == VisibilityState::Visible { self.request_render_frame(); }
 	}
 
 
 	fn pointer_down( &mut self, x: f32, y: f32 ) {
-		if self.animation.state() != VisibilityState::Visible { return; }
 		let scale = self.dpi / 96.0;
 		let logical_x = x / scale;
 		let logical_y = y / scale;
+		if let Some( context ) = &mut self.context_menu {
+			let interaction = context.menu.pointer_down( logical_x, logical_y );
+			self.handle_context_menu_interaction( interaction );
+			return;
+		}
+		if self.animation.state() != VisibilityState::Visible { return; }
+		if self.tile_creation.is_some() { return; }
+		self.drop_animation = None;
 		if let Some( rename ) = &self.renaming_bar {
 			if self.layout.hit_test_bar_title( logical_x, logical_y ) == Some( rename.bar_index ) { return; }
 			self.commit_bar_rename();
 		}
 		if let Some( address ) = self.layout.hit_test_folder_tile( logical_x, logical_y ) { self.pressed_folder_tile = Some( address ); return; }
 		if self.open_folder.is_some() && !self.layout.folder_contains( logical_x, logical_y ) { self.open_folder = None; self.reflow_layout(); unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } return; }
-		let source = if let Some( address ) = self.layout.hit_test( logical_x, logical_y ) { DragSource::Tile( address ) } else if let Some( bar_index ) = self.layout.hit_test_bar_title( logical_x, logical_y ) { DragSource::Bar( bar_index ) } else { return; };
-		let target = match source { DragSource::Tile( _ ) => self.layout.tile_drop_target( logical_x, logical_y ), DragSource::Bar( _ ) => self.layout.bar_drop_target( logical_x, logical_y ) };
-		let Some( target ) = target else { return; };
+		let source = if let Some( address ) = self.layout.hit_test( logical_x, logical_y ) { DragSource::Tile( address ) } else if let Some( bar_index ) = self.layout.hit_test_bar_title( logical_x, logical_y ).filter( |bar_index| !self.config.bars[ *bar_index ].locked ) { DragSource::Bar( bar_index ) } else { return; };
 		let origin_rect = match source { DragSource::Tile( address ) => self.layout.tile_rect( address ), DragSource::Bar( bar_index ) => self.layout.bar_rect( bar_index ) };
 		let Some( origin_rect ) = origin_rect else { return; };
-		self.drag = Some( PointerDrag { source, start_x: logical_x, start_y: logical_y, current_x: logical_x, current_y: logical_y, active: false, target, preview_source: source, origin_rect, original_config: self.config.clone(), preview_config: None, preview_layout: None } );
+		let mut original_config = self.config.clone();
+		materialize_layout_positions( &mut original_config, self.preferences.tile_bar_columns as usize, self.preferences.tiles_per_row as usize );
+		let target = match source {
+			DragSource::Tile( address ) => self.layout.dragged_tile_drop_target( logical_x, logical_y, logical_x - origin_rect.left, logical_y - origin_rect.top, original_config.bars[ address.bar_index ].tiles[ address.tile_index ].size.grid_width() ),
+			DragSource::Bar( _ ) => self.layout.bar_drop_target( logical_x, logical_y ),
+		};
+		let Some( target ) = target else { return; };
+		let now = Instant::now();
+		self.drag = Some( PointerDrag { source, start_x: logical_x, start_y: logical_y, current_x: logical_x, current_y: logical_y, active: false, target, preview_source: source, origin_rect, original_config, preview_config: None, preview_layout: None, preview_started: now, reflow_origins: Arc::new( HashMap::new() ) } );
 		unsafe { SetCapture( self.hwnd ); }
 	}
 
 
 	fn begin_bar_rename( &mut self, x: f32, y: f32 ) {
 		if self.animation.state() != VisibilityState::Visible { return; }
+		if self.context_menu.take().is_some() { unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } return; }
 		let scale = self.dpi / 96.0;
 		let Some( bar_index ) = self.layout.hit_test_bar_title( x / scale, y / scale ) else { return; };
 		self.commit_bar_rename();
 		if self.drag.take().is_some() { unsafe { let _ = ReleaseCapture(); } }
-		let original_title = self.config.bars[ bar_index ].title.clone();
-		self.renaming_bar = Some( BarRename { bar_index, original_title } );
+		self.renaming_bar = Some( BarRename { bar_index, caret_visible: true } );
+		unsafe { let _ = SetTimer( Some( self.hwnd ), BAR_RENAME_CARET_TIMER_ID, BAR_RENAME_CARET_INTERVAL_MS, None ); }
 		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
 	}
 
 
 	fn handle_character( &mut self, value: u32 ) -> bool {
-		let Some( rename ) = &self.renaming_bar else { return false; };
+		let Some( rename ) = &mut self.renaming_bar else { return false; };
+		rename.caret_visible = true;
+		unsafe { let _ = SetTimer( Some( self.hwnd ), BAR_RENAME_CARET_TIMER_ID, BAR_RENAME_CARET_INTERVAL_MS, None ); }
 		if value == 13 { self.commit_bar_rename(); return true; }
 		if value == 8 {
 			self.config.bars[ rename.bar_index ].title.pop();
@@ -619,9 +725,73 @@ impl WindowState {
 
 	fn commit_bar_rename( &mut self ) {
 		let Some( rename ) = self.renaming_bar.take() else { return; };
+		unsafe { let _ = KillTimer( Some( self.hwnd ), BAR_RENAME_CARET_TIMER_ID ); }
 		let title = self.config.bars[ rename.bar_index ].title.trim().to_string();
-		self.config.bars[ rename.bar_index ].title = if title.is_empty() { rename.original_title } else { title };
+		self.config.bars[ rename.bar_index ].title = title;
 		if let Err( error ) = self.config_store.save( &self.config ) { show_error_dialog( "保存磁贴栏名称失败", &error ); }
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+
+
+	fn show_tile_bar_menu( &mut self, x: f32, y: f32 ) {
+		if !matches!( self.animation.state(), VisibilityState::Opening | VisibilityState::Visible ) { return; }
+		if self.tile_creation.is_some() { return; }
+		self.context_menu = None;
+		let scale = self.dpi / 96.0;
+		let logical_x = x / scale;
+		let logical_y = y / scale;
+		if self.layout.hit_test( logical_x, logical_y ).is_some() { return; }
+		let Some( bar_index ) = self.layout.hit_test_bar( logical_x, logical_y ) else { return; };
+		let Some( DropTarget::Tile { position, .. } ) = self.layout.tile_drop_target( logical_x, logical_y ) else { return; };
+		let viewport_width = self.client_size.width as f32 * 96.0 / self.dpi;
+		let viewport_height = self.client_size.height as f32 * 96.0 / self.dpi;
+		let lock_item = if self.config.bars[ bar_index ].locked { ContextMenuItem::command( TILE_MENU_TOGGLE_LOCK, "解锁磁贴栏", "\u{E785}" ) } else { ContextMenuItem::command( TILE_MENU_TOGGLE_LOCK, "锁定磁贴栏", "\u{E72E}" ) };
+		let items = vec![ ContextMenuItem::submenu( "新建磁贴", "\u{E710}", vec![ ContextMenuItem::command( TILE_MENU_SMALL, "小", "" ), ContextMenuItem::command( TILE_MENU_NORMAL, "正常", "" ), ContextMenuItem::command( TILE_MENU_MEDIUM, "中", "" ), ContextMenuItem::command( TILE_MENU_LARGE, "大", "" ) ] ), ContextMenuNode::Separator, lock_item ];
+		self.context_menu = Some( TileBarContextMenu { menu: ContextMenu::open( logical_x, logical_y, viewport_width, viewport_height, items ), bar_index, position } );
+		self.hovered_tile = None;
+		self.hovered_folder_tile = None;
+		self.request_render_frame();
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+
+
+	fn handle_context_menu_interaction( &mut self, interaction: ContextMenuInteraction ) {
+		match interaction {
+			ContextMenuInteraction::KeepOpen => { if self.context_menu.as_ref().is_some_and( |context| context.menu.is_animating() ) { self.request_render_frame(); } }
+			ContextMenuInteraction::Dismiss => { self.context_menu = None; }
+			ContextMenuInteraction::Command( command ) => {
+				let Some( context ) = self.context_menu.take() else { return; };
+				let size = match command { TILE_MENU_SMALL => Some( TileSize::Small ), TILE_MENU_NORMAL => Some( TileSize::Normal ), TILE_MENU_MEDIUM => Some( TileSize::Medium ), TILE_MENU_LARGE => Some( TileSize::Large ), _ => None };
+				if let Some( size ) = size {
+					self.tile_creation = Some( TileCreation { bar_index: context.bar_index, position: context.position, size, opened_at: Instant::now() } );
+					self.request_render_frame();
+				} else if command == TILE_MENU_TOGGLE_LOCK && context.bar_index < self.config.bars.len() {
+					self.config.bars[ context.bar_index ].locked = !self.config.bars[ context.bar_index ].locked;
+					if let Err( error ) = self.config_store.save( &self.config ) { show_error_dialog( "保存磁贴栏锁定状态失败", &error ); }
+				}
+			}
+		}
+		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
+	}
+
+
+	fn handle_tile_creation_click( &mut self, x: f32, y: f32 ) {
+		let ( panel, program, _, _ ) = tile_creation_rects( self.client_size.width as f32 * 96.0 / self.dpi, self.client_size.height as f32 * 96.0 / self.dpi );
+		if !rect_contains( panel, x, y ) { self.tile_creation = None; unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); } return; }
+		if !rect_contains( program, x, y ) { return; }
+		if let Some( input ) = &self.input { input.set_surface_visible( false ); }
+		let selected = choose_program( self.hwnd );
+		if let Some( input ) = &self.input { input.set_surface_visible( true ); }
+		let selected = match selected { Ok( selected ) => selected, Err( error ) => { show_error_dialog( "创建程序磁贴失败", &error ); return; } };
+		let Some( selected ) = selected else { return; };
+		let Some( creation ) = self.tile_creation.take() else { return; };
+		if creation.bar_index >= self.config.bars.len() { return; }
+		let mut tile = Tile { runtime_id: crate::config::next_tile_runtime_id(), title: selected.title, position: None, grid_position: Some( creation.position ), size: creation.size, target: selected.shortcut.to_string_lossy().into_owned(), arguments: String::new(), working_directory: String::new(), color: "#606060".to_string(), icon_source: selected.icon_source.to_string_lossy().into_owned(), tiles: Vec::new() };
+		materialize_layout_positions( &mut self.config, self.preferences.tile_bar_columns as usize, self.preferences.tiles_per_row as usize );
+		place_tile_with_reflow( &mut self.config.bars[ creation.bar_index ], &mut tile, creation.position, self.preferences.tiles_per_row as usize );
+		self.config.bars[ creation.bar_index ].tiles.push( tile );
+		self.reflow_layout();
+		if let Err( error ) = self.config_store.save( &self.config ) { show_error_dialog( "保存新磁贴失败", &error ); }
 		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
 	}
 
@@ -630,10 +800,17 @@ impl WindowState {
 		let scale = self.dpi / 96.0;
 		let logical_x = x / scale;
 		let logical_y = y / scale;
+		if let Some( context ) = &mut self.context_menu {
+			let interaction = context.menu.pointer_up( logical_x, logical_y );
+			self.handle_context_menu_interaction( interaction );
+			return;
+		}
+		if self.tile_creation.is_some() { self.handle_tile_creation_click( logical_x, logical_y ); return; }
 		if let Some( pressed ) = self.pressed_folder_tile.take() {
 			if self.layout.hit_test_folder_tile( logical_x, logical_y ) == Some( pressed ) { self.launch_folder_tile( pressed ); }
 			return;
 		}
+		if self.drag.is_some() { self.update_drag_pointer( logical_x, logical_y ); }
 		let Some( drag ) = self.drag.take() else { return; };
 		unsafe { let _ = ReleaseCapture(); }
 		if !drag.active {
@@ -646,9 +823,17 @@ impl WindowState {
 			}
 			return;
 		}
+		let dropped_tile = if let DragSource::Tile( address ) = drag.source { Some( ( drag.original_config.bars[ address.bar_index ].tiles[ address.tile_index ].runtime_id(), translated_rect( drag.origin_rect, drag.current_x - drag.start_x, drag.current_y - drag.start_y ) ) ) } else { None };
 		if let Some( preview_config ) = drag.preview_config { self.config = preview_config; }
-		if let Some( preview_layout ) = drag.preview_layout { self.layout = preview_layout; } else { self.reflow_layout(); }
+		remove_empty_unlocked_bars( &mut self.config );
+		self.reflow_layout();
 		self.open_folder = None;
+		if let Some( ( runtime_id, from_rect ) ) = dropped_tile {
+			if let Some( to_rect ) = tile_rect_by_runtime_id( &self.config, &self.layout, runtime_id ) {
+				let duration_ms = self.preferences.tile_animation_duration_ms;
+				if duration_ms > 0 && from_rect != to_rect { self.drop_animation = Some( TileDropAnimation { runtime_id, from_rect, to_rect, started_at: Instant::now(), duration_ms } ); self.request_render_frame(); }
+			}
+		}
 		if let Err( error ) = self.config_store.save( &self.config ) { show_error_dialog( "保存磁贴布局失败", &error ); }
 		unsafe { let _ = InvalidateRect( Some( self.hwnd ), None, false ); }
 	}
@@ -677,6 +862,7 @@ impl WindowState {
 
 	fn rebuild_drag_preview( &mut self ) {
 		let Some( drag ) = &self.drag else { return; };
+		let reflow_origins = current_drag_tile_rects( drag, &self.layout, self.preferences.tile_animation_duration_ms );
 		let mut preview = drag.original_config.clone();
 		let preview_source = match ( drag.source, drag.target ) {
 			( DragSource::Tile( source ), target @ ( DropTarget::Tile { .. } | DropTarget::NewBar { .. } ) ) => DragSource::Tile( move_tile_in_config( &mut preview, source, target, self.preferences.tile_bar_columns as usize, self.preferences.tiles_per_row as usize ) ),
@@ -691,6 +877,8 @@ impl WindowState {
 			drag.preview_source = preview_source;
 			drag.preview_config = Some( preview );
 			drag.preview_layout = Some( preview_layout );
+			drag.preview_started = Instant::now();
+			drag.reflow_origins = Arc::new( reflow_origins );
 		}
 	}
 
@@ -716,8 +904,76 @@ impl WindowState {
 
 	fn render_frame( &mut self ) {
 		self.render_frame_pending = false;
+		self.sample_drag_pointer();
+		if self.take_pending_drag_release() { unsafe { let _ = RedrawWindow( Some( self.hwnd ), None, None, RDW_INVALIDATE | RDW_UPDATENOW ); } return; }
+		if self.drop_animation.as_ref().is_some_and( |animation| tile_reflow_progress( animation.started_at, animation.duration_ms ) >= 1.0 ) { self.drop_animation = None; }
 		unsafe { let _ = RedrawWindow( Some( self.hwnd ), None, None, RDW_INVALIDATE | RDW_UPDATENOW ); }
+		if self.drag.as_ref().is_some_and( |drag| drag.active && tile_reflow_progress( drag.preview_started, self.preferences.tile_animation_duration_ms ) < 1.0 ) || self.drop_animation.is_some() || self.tile_creation.as_ref().is_some_and( |creation| creation.opened_at.elapsed() < Duration::from_millis( 190 ) ) || self.context_menu.as_ref().is_some_and( |context| context.menu.is_animating() ) { self.request_render_frame(); }
 	}
+
+
+	fn take_pending_drag_release( &mut self ) -> bool {
+		if !self.drag.as_ref().is_some_and( |drag| drag.active ) { return false; }
+		let mut message = MSG::default();
+		if !unsafe { PeekMessageW( &mut message, Some( self.hwnd ), WM_LBUTTONUP, WM_LBUTTONUP, PM_REMOVE ) }.as_bool() { return false; }
+		let x = message.lParam.0 as i16 as f32;
+		let y = ( message.lParam.0 >> 16 ) as i16 as f32;
+		self.pointer_up( x, y );
+		true
+	}
+}
+
+
+fn tile_creation_rects( width: f32, height: f32 ) -> ( D2D_RECT_F, D2D_RECT_F, D2D_RECT_F, D2D_RECT_F ) {
+	let panel_width = 460.0;
+	let panel_height = 286.0;
+	let left = ( width - panel_width ) * 0.5;
+	let top = ( height - panel_height ) * 0.5;
+	let panel = D2D_RECT_F { left, top, right: left + panel_width, bottom: top + panel_height };
+	let program = D2D_RECT_F { left: left + 28.0, top: top + 78.0, right: left + panel_width - 28.0, bottom: top + 132.0 };
+	let web = D2D_RECT_F { left: program.left, top: program.bottom + 10.0, right: program.right, bottom: program.bottom + 64.0 };
+	let image = D2D_RECT_F { left: program.left, top: web.bottom + 10.0, right: program.right, bottom: web.bottom + 64.0 };
+	( panel, program, web, image )
+}
+
+
+fn rect_contains( rect: D2D_RECT_F, x: f32, y: f32 ) -> bool {
+	x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+
+fn should_show_backdrop( transition_ready: bool, blur_percent: u8 ) -> bool {
+	transition_ready || blur_percent > 0
+}
+
+
+fn current_drag_tile_rects( drag: &PointerDrag, original_layout: &TileLayout, duration_ms: u32 ) -> HashMap< u64, D2D_RECT_F > {
+	let config = drag.preview_config.as_ref().unwrap_or( &drag.original_config );
+	let layout = drag.preview_layout.as_ref().unwrap_or( original_layout );
+	let progress = reflow_ease( tile_reflow_progress( drag.preview_started, duration_ms ) );
+	let mut rects = HashMap::with_capacity( layout.tiles.len() );
+	for region in &layout.tiles {
+		let tile = &config.bars[ region.address.bar_index ].tiles[ region.address.tile_index ];
+		let source = drag.reflow_origins.get( &tile.runtime_id() ).copied().unwrap_or( region.rect );
+		rects.insert( tile.runtime_id(), interpolate_rect( source, region.rect, progress ) );
+	}
+	rects
+}
+
+
+fn tile_reflow_progress( started: Instant, duration_ms: u32 ) -> f32 {
+	if duration_ms == 0 { return 1.0; }
+	( started.elapsed().as_secs_f32() * 1000.0 / duration_ms as f32 ).clamp( 0.0, 1.0 )
+}
+
+
+fn translated_rect( rect: D2D_RECT_F, x: f32, y: f32 ) -> D2D_RECT_F {
+	D2D_RECT_F { left: rect.left + x, top: rect.top + y, right: rect.right + x, bottom: rect.bottom + y }
+}
+
+
+fn tile_rect_by_runtime_id( config: &StartConfig, layout: &TileLayout, runtime_id: u64 ) -> Option< D2D_RECT_F > {
+	layout.tiles.iter().find_map( |region| ( config.bars[ region.address.bar_index ].tiles[ region.address.tile_index ].runtime_id() == runtime_id ).then_some( region.rect ) )
 }
 
 
@@ -725,23 +981,22 @@ fn move_tile_in_config( config: &mut StartConfig, source: TileAddress, target: D
 	if source.bar_index >= config.bars.len() || source.tile_index >= config.bars[ source.bar_index ].tiles.len() { return source; }
 	let bar_columns = bar_columns.max( 1 );
 	let tiles_per_row = tiles_per_row.max( 1 );
-	materialize_layout_positions( config, bar_columns, tiles_per_row );
+	if !layout_positions_materialized( config ) { materialize_layout_positions( config, bar_columns, tiles_per_row ); }
 	let mut tile = config.bars[ source.bar_index ].tiles.remove( source.tile_index );
 	match target {
 		DropTarget::Tile { bar_index, position } if bar_index < config.bars.len() => {
-			let slot = position_to_slot( position, tiles_per_row );
-			shift_tiles_from_slot( &mut config.bars[ bar_index ], slot, tiles_per_row );
-			tile.position = Some( slot_to_position( slot, tiles_per_row ) );
+			place_tile_with_reflow( &mut config.bars[ bar_index ], &mut tile, position, tiles_per_row );
 			let tile_index = config.bars[ bar_index ].tiles.len();
 			config.bars[ bar_index ].tiles.push( tile );
 			TileAddress { bar_index, tile_index }
 		}
-		DropTarget::NewBar { column, stack_index } => {
-			tile.position = Some( TilePosition { column: 0, row: 0 } );
+		DropTarget::NewBar { column, stack_index, position } => {
+			tile.position = None;
+			tile.grid_position = Some( position );
 			let column = column.min( bar_columns - 1 );
 			let insertion = bar_insertion_index( config, column, stack_index );
-			let title = new_bar_title( config );
-			config.bars.insert( insertion, TileBar { title, column: Some( column as u8 ), tiles: vec![ tile ] } );
+			let title = new_bar_title();
+			config.bars.insert( insertion, TileBar { title, column: Some( column as u8 ), locked: false, tiles: vec![ tile ] } );
 			TileAddress { bar_index: insertion, tile_index: 0 }
 		}
 		_ => {
@@ -772,9 +1027,14 @@ fn move_bar_in_config( config: &mut StartConfig, source: usize, target_column: u
 fn materialize_layout_positions( config: &mut StartConfig, bar_columns: usize, tiles_per_row: usize ) {
 	materialize_bar_columns( config, bar_columns );
 	for bar in &mut config.bars {
-		let slots = resolved_tile_slots( bar, tiles_per_row );
-		for ( tile, slot ) in bar.tiles.iter_mut().zip( slots ) { tile.position = Some( slot_to_position( slot, tiles_per_row ) ); }
+		let positions = resolved_tile_positions( bar, tiles_per_row );
+		for ( tile, position ) in bar.tiles.iter_mut().zip( positions ) { tile.position = None; tile.grid_position = Some( position ); }
 	}
+}
+
+
+fn layout_positions_materialized( config: &StartConfig ) -> bool {
+	config.bars.iter().all( |bar| bar.column.is_some() && bar.tiles.iter().all( |tile| tile.grid_position.is_some() ) )
 }
 
 
@@ -784,13 +1044,19 @@ fn materialize_bar_columns( config: &mut StartConfig, bar_columns: usize ) {
 }
 
 
-fn shift_tiles_from_slot( bar: &mut TileBar, target_slot: usize, tiles_per_row: usize ) {
-	let mut free_slot = target_slot;
-	while bar.tiles.iter().any( |tile| tile.position.is_some_and( |position| position_to_slot( position, tiles_per_row ) == free_slot ) ) { free_slot += 1; }
-	while free_slot > target_slot {
-		let occupied_slot = free_slot - 1;
-		if let Some( tile ) = bar.tiles.iter_mut().find( |tile| tile.position.is_some_and( |position| position_to_slot( position, tiles_per_row ) == occupied_slot ) ) { tile.position = Some( slot_to_position( free_slot, tiles_per_row ) ); }
-		free_slot -= 1;
+fn place_tile_with_reflow( bar: &mut TileBar, tile: &mut crate::config::Tile, requested: TilePosition, tiles_per_row: usize ) {
+	let units_per_row = tiles_per_row.max( 1 ) * 2;
+	let width = tile.size.grid_width().min( units_per_row );
+	let requested = TilePosition { column: ( requested.column as usize ).min( units_per_row - width ) as u8, row: requested.row };
+	tile.position = None;
+	tile.grid_position = Some( requested );
+	let mut occupied = BTreeSet::new();
+	occupy_tile_cells( requested, tile.size.grid_width(), tile.size.grid_height(), &mut occupied );
+	for existing in &mut bar.tiles {
+		let current = existing.grid_position.unwrap_or_default();
+		let position = if tile_cells_available( current, existing.size.grid_width(), existing.size.grid_height(), units_per_row, &occupied ) { current } else { find_available_tile_position( current, existing.size.grid_width(), existing.size.grid_height(), units_per_row, &occupied ) };
+		existing.grid_position = Some( position );
+		occupy_tile_cells( position, existing.size.grid_width(), existing.size.grid_height(), &mut occupied );
 	}
 }
 
@@ -801,25 +1067,36 @@ fn bar_insertion_index( config: &StartConfig, column: usize, stack_index: usize 
 }
 
 
-fn position_to_slot( position: TilePosition, tiles_per_row: usize ) -> usize {
-	position.row as usize * tiles_per_row + position.column.min( tiles_per_row.saturating_sub( 1 ) as u8 ) as usize
-}
-
-
-fn slot_to_position( slot: usize, tiles_per_row: usize ) -> TilePosition {
-	TilePosition { column: ( slot % tiles_per_row ) as u8, row: ( slot / tiles_per_row ).min( u16::MAX as usize ) as u16 }
-}
-
-
-fn new_bar_title( config: &StartConfig ) -> String {
-	let base = "新磁贴栏";
-	if config.bars.iter().all( |bar| bar.title != base ) { return base.to_string(); }
-	let mut suffix = 2;
+fn find_available_tile_position( preferred: TilePosition, width: usize, height: usize, units_per_row: usize, occupied: &BTreeSet< ( usize, usize ) > ) -> TilePosition {
+	let width = width.min( units_per_row ).max( 1 );
+	let mut slot = preferred.row as usize * units_per_row + ( preferred.column as usize ).min( units_per_row - width );
 	loop {
-		let candidate = format!( "{} {}", base, suffix );
-		if config.bars.iter().all( |bar| bar.title != candidate ) { return candidate; }
-		suffix += 1;
+		let position = TilePosition { column: ( slot % units_per_row ) as u8, row: ( slot / units_per_row ).min( u16::MAX as usize ) as u16 };
+		if tile_cells_available( position, width, height, units_per_row, occupied ) { return position; }
+		slot += 1;
 	}
+}
+
+
+fn tile_cells_available( position: TilePosition, width: usize, height: usize, units_per_row: usize, occupied: &BTreeSet< ( usize, usize ) > ) -> bool {
+	position.column as usize + width <= units_per_row && ( 0..height ).all( |y| ( 0..width ).all( |x| !occupied.contains( &( position.column as usize + x, position.row as usize + y ) ) ) )
+}
+
+
+fn occupy_tile_cells( position: TilePosition, width: usize, height: usize, occupied: &mut BTreeSet< ( usize, usize ) > ) {
+	for y in 0..height { for x in 0..width { occupied.insert( ( position.column as usize + x, position.row as usize + y ) ); } }
+}
+
+
+fn new_bar_title() -> String {
+	"新磁贴栏".to_string()
+}
+
+
+fn remove_empty_unlocked_bars( config: &mut StartConfig ) {
+	if config.bars.is_empty() { return; }
+	if config.bars.iter().all( |bar| !bar.locked && bar.tiles.is_empty() ) { config.bars.drain( 1.. ); return; }
+	config.bars.retain( |bar| bar.locked || !bar.tiles.is_empty() );
 }
 
 
@@ -874,7 +1151,9 @@ unsafe extern "system" fn window_proc( hwnd: HWND, message: u32, wparam: WPARAM,
 				let action = unsafe { ( *state ).input.as_ref().and_then( |input| input.raw_input_action( lparam ) ) };
 				match action {
 					Some( GlobalInputAction::Toggle ) => unsafe { ( *state ).toggle() },
-					Some( GlobalInputAction::Dismiss ) => unsafe { ( *state ).begin_close() },
+					Some( GlobalInputAction::Dismiss ) => unsafe {
+						if ( *state ).context_menu.take().is_some() { let _ = InvalidateRect( Some( hwnd ), None, false ); } else { ( *state ).begin_close(); }
+					},
 					None => {}
 				}
 				return unsafe { DefWindowProcW( hwnd, message, wparam, lparam ) };
@@ -909,6 +1188,10 @@ unsafe extern "system" fn window_proc( hwnd: HWND, message: u32, wparam: WPARAM,
 					if unsafe { ( *state ).animation.state() == VisibilityState::Hidden } { trim_working_set(); }
 					return LRESULT( 0 );
 				}
+				if wparam.0 == BAR_RENAME_CARET_TIMER_ID {
+					if let Some( rename ) = unsafe { &mut ( *state ).renaming_bar } { rename.caret_visible = !rename.caret_visible; unsafe { let _ = InvalidateRect( Some( hwnd ), None, false ); } } else { unsafe { let _ = KillTimer( Some( hwnd ), BAR_RENAME_CARET_TIMER_ID ); } }
+					return LRESULT( 0 );
+				}
 			}
 			WM_LBUTTONDOWN => {
 				let x = lparam.0 as i16 as f32;
@@ -926,6 +1209,19 @@ unsafe extern "system" fn window_proc( hwnd: HWND, message: u32, wparam: WPARAM,
 				let x = lparam.0 as i16 as f32;
 				let y = ( lparam.0 >> 16 ) as i16 as f32;
 				unsafe { ( *state ).pointer_up( x, y ); }
+				return LRESULT( 0 );
+			}
+			WM_RBUTTONUP => {
+				let x = lparam.0 as i16 as f32;
+				let y = ( lparam.0 >> 16 ) as i16 as f32;
+				unsafe { ( *state ).show_tile_bar_menu( x, y ); }
+				return LRESULT( 0 );
+			}
+			WM_CONTEXTMENU => {
+				let mut point = if lparam.0 == -1 { POINT::default() } else { POINT { x: lparam.0 as i16 as i32, y: ( lparam.0 >> 16 ) as i16 as i32 } };
+				if lparam.0 != -1 || unsafe { GetCursorPos( &mut point ) }.is_ok() {
+					unsafe { let _ = ScreenToClient( hwnd, &mut point ); ( *state ).show_tile_bar_menu( point.x as f32, point.y as f32 ); }
+				}
 				return LRESULT( 0 );
 			}
 			WM_MOUSEMOVE => {
@@ -1001,17 +1297,18 @@ mod tests {
 		assert_eq!( address, TileAddress { bar_index: 1, tile_index: 2 } );
 		assert_eq!( titles( &config.bars[ 0 ] ), vec![ "a", "c" ] );
 		assert_eq!( titles( &config.bars[ 1 ] ), vec![ "d", "e", "b" ] );
-		assert_eq!( config.bars[ 1 ].tiles[ 1 ].position, Some( TilePosition { column: 2, row: 0 } ) );
-		assert_eq!( config.bars[ 1 ].tiles[ 2 ].position, Some( TilePosition { column: 1, row: 0 } ) );
+		assert_eq!( config.bars[ 1 ].tiles[ 1 ].grid_position, Some( TilePosition { column: 5, row: 0 } ) );
+		assert_eq!( config.bars[ 1 ].tiles[ 2 ].grid_position, Some( TilePosition { column: 1, row: 0 } ) );
 	}
 
 
 	#[test]
 	fn tile_outside_a_bar_creates_a_new_stacked_bar() {
 		let mut config = StartConfig { bars: vec![ bar( "left", &[ "a", "b" ] ) ] };
-		let address = move_tile_in_config( &mut config, TileAddress { bar_index: 0, tile_index: 1 }, DropTarget::NewBar { column: 1, stack_index: 0 }, 2, 4 );
+		let address = move_tile_in_config( &mut config, TileAddress { bar_index: 0, tile_index: 1 }, DropTarget::NewBar { column: 1, stack_index: 0, position: TilePosition { column: 4, row: 0 } }, 2, 4 );
 		assert_eq!( address, TileAddress { bar_index: 1, tile_index: 0 } );
 		assert_eq!( config.bars[ 1 ].column, Some( 1 ) );
+		assert_eq!( config.bars[ 1 ].tiles[ 0 ].grid_position, Some( TilePosition { column: 4, row: 0 } ) );
 		assert_eq!( titles( &config.bars[ 1 ] ), vec![ "b" ] );
 	}
 
@@ -1026,8 +1323,50 @@ mod tests {
 	}
 
 
+	#[test]
+	fn empty_unlocked_bars_are_removed_but_locked_bars_remain() {
+		let mut locked = bar( "space", &[] );
+		locked.locked = true;
+		let mut config = StartConfig { bars: vec![ bar( "empty", &[] ), locked, bar( "apps", &[ "1" ] ) ] };
+		remove_empty_unlocked_bars( &mut config );
+		assert_eq!( config.bars.len(), 2 );
+		assert_eq!( config.bars[ 0 ].title, "space" );
+		assert_eq!( config.bars[ 1 ].title, "apps" );
+	}
+
+
+	#[test]
+	fn one_empty_bar_remains_as_the_creation_surface() {
+		let mut config = StartConfig { bars: vec![ bar( "first", &[] ), bar( "second", &[] ) ] };
+		remove_empty_unlocked_bars( &mut config );
+		assert_eq!( config.bars.len(), 1 );
+		assert_eq!( config.bars[ 0 ].title, "first" );
+	}
+
+
+	#[test]
+	fn zero_tile_animation_duration_completes_immediately() {
+		assert_eq!( tile_reflow_progress( Instant::now(), 0 ), 1.0 );
+	}
+
+
+	#[test]
+	fn plain_desktop_without_blur_does_not_need_a_backdrop_window() {
+		assert!( !should_show_backdrop( false, 0 ) );
+		assert!( should_show_backdrop( true, 0 ) );
+		assert!( should_show_backdrop( false, 1 ) );
+	}
+
+
+	#[test]
+	fn new_tile_bars_use_an_unnumbered_title() {
+		assert_eq!( new_bar_title(), "新磁贴栏" );
+		assert_eq!( new_bar_title(), "新磁贴栏" );
+	}
+
+
 	fn bar( title: &str, values: &[ &str ] ) -> TileBar {
-		TileBar { title: title.to_string(), column: None, tiles: values.iter().map( |value| Tile { title: ( *value ).to_string(), position: None, target: "test.exe".to_string(), arguments: String::new(), working_directory: String::new(), color: "#0067C0".to_string(), tiles: Vec::new() } ).collect() }
+		TileBar { title: title.to_string(), column: None, locked: false, tiles: values.iter().map( |value| Tile { runtime_id: crate::config::next_tile_runtime_id(), title: ( *value ).to_string(), position: None, grid_position: None, size: TileSize::Normal, target: "test.exe".to_string(), arguments: String::new(), working_directory: String::new(), color: "#0067C0".to_string(), icon_source: String::new(), tiles: Vec::new() } ).collect() }
 	}
 
 

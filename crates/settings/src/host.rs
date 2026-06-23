@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Gdi::{ BeginPaint, EndPaint, HMONITOR, InvalidateR
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{ GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent };
-use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, HICON, ICON_SMALL, IDC_ARROW, KillTimer, LoadCursorW, MINMAXINFO, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETICON, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW };
+use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, HICON, ICON_SMALL, IDC_ARROW, IsIconic, KillTimer, LoadCursorW, MINMAXINFO, PostMessageW, RegisterClassW, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETICON, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW };
 use windows::core::{ Result as WindowsResult, w };
 
 
@@ -51,7 +51,7 @@ pub( crate ) fn post_show_settings( hwnd: HWND ) {
 	unsafe { let _ = PostMessageW( Some( hwnd ), WM_SHOW_SETTINGS, WPARAM( 0 ), LPARAM( 0 ) ); }
 }
 pub( crate ) fn show_window( hwnd: HWND ) {
-	unsafe { let _ = ShowWindow( hwnd, SW_SHOW ); }
+	unsafe { let _ = ShowWindow( hwnd, if IsIconic( hwnd ).as_bool() { SW_RESTORE } else { SW_SHOW } ); }
 }
 pub( crate ) fn hide_window( hwnd: HWND ) {
 	unsafe { let _ = ShowWindow( hwnd, SW_HIDE ); }
@@ -102,7 +102,7 @@ pub( crate ) fn paint_window( hwnd: HWND, state: &SettingsState ) {
 	unsafe {
 		BeginPaint( hwnd, &mut paint );
 		let _ = GetClientRect( hwnd, &mut client );
-		state.paint_buffered( paint.hdc, client );
+		if client.right > client.left && client.bottom > client.top { state.paint_buffered( paint.hdc, client ); }
 		let _ = EndPaint( hwnd, &paint );
 	}
 }
@@ -174,7 +174,7 @@ unsafe extern "system" fn settings_window_proc( hwnd: HWND, message: u32, wparam
 				return LRESULT( 0 );
 			}
 			WM_SIZE => {
-				unsafe { ( *state ).on_size(); }
+				if wparam.0 != SIZE_MINIMIZED as usize { unsafe { ( *state ).on_size(); } }
 				return LRESULT( 0 );
 			}
 			WM_EXITSIZEMOVE => {

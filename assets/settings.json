@@ -2,9 +2,14 @@
 	"start": {
 		"overlay_opacity_percent": 50,
 		"blur_percent": 0,
-		"opening_duration_ms": 500,
+		"opening_duration_ms": 350,
 		"shortcut": "win",
 		"open_on_start_button_click": true,
+		"rounded_tiles": true,
+		"rounded_tile_bars": true,
+		"tile_animation_duration_ms": 220,
+		"tile_background_opacity_percent": 48,
+		"tile_bar_background_opacity_percent": 48,
 		"tile_bar_columns": 4,
 		"tiles_per_row": 4
 	}

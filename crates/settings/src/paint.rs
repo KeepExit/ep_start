@@ -98,6 +98,11 @@ fn setting_view< 'a >( text: &'a TextResources, preferences: &AppPreferences, id
 		SettingId::StartButtonClick => SettingView { icon: "⊞", text: &text.start_button_click, value: if preferences.start.open_on_start_button_click { text.on.clone() } else { text.off.clone() }, minimum: "", maximum: "", ratio: 0.0 },
 		SettingId::BarColumns => SettingView { icon: "▦", text: &text.group_columns, value: preferences.start.tile_bar_columns.to_string(), minimum: "", maximum: "", ratio: 0.0 },
 		SettingId::TilesPerRow => SettingView { icon: "≡", text: &text.tiles_per_row, value: preferences.start.tiles_per_row.to_string(), minimum: "", maximum: "", ratio: 0.0 },
+		SettingId::RoundedTiles => SettingView { icon: "▢", text: &text.rounded_tiles, value: if preferences.start.rounded_tiles { text.on.clone() } else { text.off.clone() }, minimum: "", maximum: "", ratio: 0.0 },
+		SettingId::RoundedTileBars => SettingView { icon: "▤", text: &text.rounded_tile_bars, value: if preferences.start.rounded_tile_bars { text.on.clone() } else { text.off.clone() }, minimum: "", maximum: "", ratio: 0.0 },
+		SettingId::TileAnimationDuration => SettingView { icon: "↝", text: &text.tile_animation_duration, value: format!( "{} ms", preferences.start.tile_animation_duration_ms ), minimum: "0 ms", maximum: "1000 ms", ratio: preferences.start.tile_animation_duration_ms as f32 / 1000.0 },
+		SettingId::TileBackgroundOpacity => SettingView { icon: "◩", text: &text.tile_background_opacity, value: format!( "{}%", preferences.start.tile_background_opacity_percent ), minimum: "0%", maximum: "100%", ratio: preferences.start.tile_background_opacity_percent as f32 / 100.0 },
+		SettingId::TileBarBackgroundOpacity => SettingView { icon: "▥", text: &text.tile_bar_background_opacity, value: format!( "{}%", preferences.start.tile_bar_background_opacity_percent ), minimum: "0%", maximum: "100%", ratio: preferences.start.tile_bar_background_opacity_percent as f32 / 100.0 },
 		SettingId::RestartShell => SettingView { icon: "↻", text: &text.restart_shell, value: text.restart_now.clone(), minimum: "", maximum: "", ratio: 0.0 },
 	}
 }

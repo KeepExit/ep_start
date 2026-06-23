@@ -237,7 +237,8 @@ fn layout_scrollbar( width: i32, height: i32, viewport_height: i32, body_height:
 	let track_top = HEADER_HEIGHT + 8;
 	let track_bottom = ( height - FOOTER_HEIGHT - 8 ).max( track_top + 1 );
 	let track_height = track_bottom - track_top;
-	let thumb_height = ( track_height * viewport_height / body_height.max( 1 ) ).clamp( SCROLLBAR_MIN_THUMB, track_height );
+	let minimum_thumb = SCROLLBAR_MIN_THUMB.min( track_height );
+	let thumb_height = ( track_height * viewport_height / body_height.max( 1 ) ).clamp( minimum_thumb, track_height );
 	let travel = track_height - thumb_height;
 	let thumb_top = track_top + travel * scroll_y / scroll_max;
 	Some( ScrollbarLayout {
@@ -248,4 +249,18 @@ fn layout_scrollbar( width: i32, height: i32, viewport_height: i32, body_height:
 
 fn contains( rect: RECT, x: i32, y: i32 ) -> bool {
 	x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+
+#[cfg( test )]
+mod tests {
+	use super::*;
+
+
+	#[test]
+	fn minimized_client_size_does_not_break_layout() {
+		let ui = SettingsUi::settings_page();
+		let layout = SettingsUiLayout::calculate( &ui, RECT::default(), 96, 0 );
+		assert!( layout.content.scroll_max >= 0 );
+	}
 }

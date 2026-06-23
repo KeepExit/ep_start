@@ -7,11 +7,13 @@ mod animation;
 mod backdrop;
 mod backdrop_capture;
 mod config;
+mod context_menu;
 mod launcher;
 mod layout;
 mod overlay;
 mod renderer;
 mod runtime;
+mod tile_customization;
 mod transition;
 mod window;
 

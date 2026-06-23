@@ -92,6 +92,8 @@ impl SettingsState {
 		request_repaint( self.hwnd );
 	}
 	pub( crate ) fn on_size( &mut self ) {
+		let client = crate::host::client_rect( self.hwnd );
+		if client.right <= client.left || client.bottom <= client.top { return; }
 		let maximum = self.layout().content.scroll_max;
 		self.scroll_y = self.scroll_y.clamp( 0, maximum );
 		request_repaint( self.hwnd );
@@ -134,6 +136,8 @@ impl SettingsState {
 			InteractionId::Action( ActionId::Undo ) => self.undo(),
 			InteractionId::Action( ActionId::Save ) => self.save(),
 			InteractionId::Setting( SettingId::StartButtonClick ) => self.toggle_switch( SettingId::StartButtonClick ),
+			InteractionId::Setting( SettingId::RoundedTiles ) => self.toggle_switch( SettingId::RoundedTiles ),
+			InteractionId::Setting( SettingId::RoundedTileBars ) => self.toggle_switch( SettingId::RoundedTileBars ),
 			InteractionId::Setting( SettingId::RestartShell ) => self.restart_shell(),
 			_ => {}
 		}

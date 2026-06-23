@@ -128,7 +128,12 @@ impl SettingsUi {
 				.item( SettingItem::new( SettingId::AnimationDuration, ControlKind::Slider ) ) );
 			content.section( SettingSection::new( SectionId::Tiles )
 				.item( SettingItem::new( SettingId::BarColumns, ControlKind::Choice ) )
-				.item( SettingItem::new( SettingId::TilesPerRow, ControlKind::Choice ) ) );
+				.item( SettingItem::new( SettingId::TilesPerRow, ControlKind::Choice ) )
+				.item( SettingItem::new( SettingId::RoundedTiles, ControlKind::Switch ) )
+				.item( SettingItem::new( SettingId::RoundedTileBars, ControlKind::Switch ) )
+				.item( SettingItem::new( SettingId::TileAnimationDuration, ControlKind::Slider ) )
+				.item( SettingItem::new( SettingId::TileBackgroundOpacity, ControlKind::Slider ) )
+				.item( SettingItem::new( SettingId::TileBarBackgroundOpacity, ControlKind::Slider ) ) );
 			content.section( SettingSection::new( SectionId::Debug )
 				.item( SettingItem::new( SettingId::RestartShell, ControlKind::Button ) ) );
 		} ).footer( |footer| {

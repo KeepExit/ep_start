@@ -16,7 +16,7 @@ use std::mem::size_of;
 use windows::Win32::Foundation::{ HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{ NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW };
-use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, PostMessageW, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_CONTEXTMENU, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP };
+use windows::Win32::UI::WindowsAndMessaging::{ CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST, PostMessageW, RegisterClassW, RegisterWindowMessageW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_CONTEXTMENU, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP };
 use windows::core::{ Result as WindowsResult, w };
 
 
@@ -149,10 +149,14 @@ impl TrayState {
 		let mut point = POINT::default();
 		unsafe {
 			let _ = GetCursorPos( &mut point );
+			let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE );
 			let _ = SetForegroundWindow( self.hwnd );
 		}
 		let command = unsafe { TrackPopupMenuEx( popup.handle(), ( TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD ).0, point.x, point.y, self.hwnd, None ) }.0 as u16;
-		unsafe { let _ = PostMessageW( Some( self.hwnd ), WM_NULL, WPARAM( 0 ), LPARAM( 0 ) ); }
+		unsafe {
+			let _ = PostMessageW( Some( self.hwnd ), WM_NULL, WPARAM( 0 ), LPARAM( 0 ) );
+			let _ = SetWindowPos( self.hwnd, Some( HWND_NOTOPMOST ), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE );
+		}
 		if command != 0 { ( self.handler )( TrayEvent::Command( command ) ); }
 	}
 

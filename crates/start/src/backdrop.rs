@@ -37,13 +37,13 @@ impl DesktopBackdrop {
 	}
 
 
-	pub fn show( &mut self, geometry: &MonitorGeometry, blur_percent: u8, notify_hwnd: HWND, notify_message: u32 ) {
+	pub fn show( &mut self, geometry: &MonitorGeometry, blur_percent: u8, notify_hwnd: HWND, notify_message: u32, insert_after: Option< HWND > ) {
 		self.blur_percent = blur_percent.min( 100 );
 		self.notify_hwnd = notify_hwnd;
 		self.notify_message = notify_message;
 		self.prepare_source( geometry );
 		unsafe {
-			let _ = SetWindowPos( self.hwnd, Some( HWND_TOPMOST ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE | SWP_SHOWWINDOW );
+			let _ = SetWindowPos( self.hwnd, Some( insert_after.unwrap_or( HWND_TOPMOST ) ), geometry.work_rect.left, geometry.work_rect.top, geometry.work_width(), geometry.work_height(), SWP_NOACTIVATE | SWP_SHOWWINDOW );
 			let _ = ShowWindow( self.hwnd, SW_SHOWNOACTIVATE );
 		}
 	}

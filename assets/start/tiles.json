@@ -1,83 +1,52 @@
 {
 	"bars": [
 		{
-			"title": "常用",
+			"title": "新磁贴栏",
 			"column": 0,
 			"tiles": [
 				{
-					"title": "文件资源管理器",
-					"position": {
+					"title": "QQ",
+					"grid_position": {
 						"column": 0,
 						"row": 1
 					},
-					"target": "explorer.exe",
-					"color": "#0078D4"
+					"size": "small",
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ 4.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
+				},
+				{
+					"title": "QQ",
+					"grid_position": {
+						"column": 1,
+						"row": 1
+					},
+					"size": "medium",
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ 5.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
+				},
+				{
+					"title": "QQ",
+					"grid_position": {
+						"column": 1,
+						"row": 0
+					},
+					"size": "small",
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ 3.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
 				}
 			]
-		},
-		{
-			"title": "asasa啊啊啊",
-			"column": 0,
-			"tiles": []
-		},
-		{
-			"title": "新",
-			"column": 0,
-			"tiles": []
 		},
 		{
 			"title": "新磁贴栏 3",
 			"column": 2,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 6",
-			"column": 2,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 7",
-			"column": 2,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 8",
-			"column": 2,
-			"tiles": [
-				{
-					"title": "计算器",
-					"position": {
-						"column": 0,
-						"row": 0
-					},
-					"target": "calc.exe",
-					"color": "#107C10"
-				}
-			]
-		},
-		{
-			"title": "新磁贴栏 9",
-			"column": 2,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 10",
-			"column": 2,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏",
-			"column": 1,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 11",
-			"column": 1,
 			"tiles": [
 				{
 					"title": "Windows 设置",
-					"position": {
-						"column": 3,
+					"grid_position": {
+						"column": 5,
 						"row": 0
 					},
 					"target": "ms-settings:",
@@ -86,29 +55,82 @@
 			]
 		},
 		{
-			"title": "新磁贴栏 12",
-			"column": 1,
-			"tiles": []
+			"title": "新磁贴栏",
+			"column": 2,
+			"tiles": [
+				{
+					"title": "QQ",
+					"grid_position": {
+						"column": 1,
+						"row": 0
+					},
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
+				}
+			]
 		},
 		{
-			"title": "新磁贴栏 13",
-			"column": 1,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 5",
-			"column": 3,
-			"tiles": []
-		},
-		{
-			"title": "新磁贴栏 2",
+			"title": "新磁贴栏 4",
 			"column": 3,
 			"tiles": [
 				{
-					"title": "记事本",
-					"position": {
+					"title": "文件资源管理器",
+					"grid_position": {
+						"column": 6,
+						"row": 0
+					},
+					"target": "explorer.exe",
+					"color": "#0078D4"
+				}
+			]
+		},
+		{
+			"title": "新磁贴栏 11",
+			"column": 1,
+			"tiles": [
+				{
+					"title": "QQ",
+					"grid_position": {
 						"column": 0,
 						"row": 0
+					},
+					"size": "small",
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ 6.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
+				},
+				{
+					"title": "QQ",
+					"grid_position": {
+						"column": 3,
+						"row": 3
+					},
+					"size": "large",
+					"target": "C:\\Users\\Ep\\AppData\\Local\\ep_start\\poster\\QQ 2.lnk",
+					"color": "#606060",
+					"icon_source": "C:\\Program Files\\App\\QQ\\QQ.exe"
+				}
+			]
+		},
+		{
+			"title": "新磁贴栏",
+			"column": 1,
+			"tiles": [
+				{
+					"title": "计算器",
+					"grid_position": {
+						"column": 2,
+						"row": 0
+					},
+					"target": "calc.exe",
+					"color": "#107C10"
+				},
+				{
+					"title": "记事本",
+					"grid_position": {
+						"column": 6,
+						"row": 4
 					},
 					"target": "notepad.exe",
 					"color": "#0067C0"
